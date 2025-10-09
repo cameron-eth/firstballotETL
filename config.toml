@@ -1,0 +1,35 @@
+[database]
+# Supabase configuration (set via environment variables)
+supabase_url = ""  # SUPABASE_URL
+supabase_key = ""  # SUPABASE_SERVICE_KEY
+enable_database = true  # Set to false to disable DB writes
+
+[data]
+# Data fetching configuration
+start_year = 2020
+end_year = 2024
+current_season = 2024
+
+# Output settings
+output_dir = "data_output"
+save_to_csv = true  # Keep CSV backup
+save_to_json = false
+save_to_database = true  # Upload to Supabase
+
+[ngs]
+# Next Gen Stats types to fetch
+stat_types = ["passing", "rushing", "receiving"]
+
+[pipeline]
+# Pipeline execution settings
+batch_size = 1000
+enable_caching = true
+cache_ttl_hours = 24
+verbose = true
+
+[filters]
+# Data filtering options
+min_attempts = 0  # Minimum attempts to include player
+positions = ["QB", "RB", "WR", "TE"]
+season_types = ["REG", "POST"]  # Regular season and Playoffs
+

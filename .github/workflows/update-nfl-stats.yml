@@ -1,0 +1,59 @@
+name: Update NFL Stats
+
+on:
+  # Run daily at 6 AM UTC (2 AM EST)
+  schedule:
+    - cron: '0 6 * * *'
+  
+  # Allow manual trigger
+  workflow_dispatch:
+    inputs:
+      year:
+        description: 'Year to fetch (default: 2025)'
+        required: false
+        default: '2025'
+      stat_types:
+        description: 'Stat types (passing, rushing, receiving, or all)'
+        required: false
+        default: 'all'
+
+jobs:
+  update-stats:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+      
+      - name: Fetch and upload NFL stats
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          YEAR="${{ github.event.inputs.year || '2025' }}"
+          STAT_TYPES="${{ github.event.inputs.stat_types || 'all' }}"
+          
+          if [ "$STAT_TYPES" = "all" ]; then
+            python impl.py --mode ngs --ngs-types passing rushing receiving --year $YEAR
+          else
+            python impl.py --mode ngs --ngs-types $STAT_TYPES --year $YEAR
+          fi
+      
+      - name: Upload CSV artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: nfl-stats-csv
+          path: data_output/*.csv
+          retention-days: 30
+
