@@ -222,10 +222,10 @@ def add_fantasy_scoring(df: pd.DataFrame, stat_type: str) -> pd.DataFrame:
         DataFrame with fantasy scoring columns added
     """
     if stat_type == 'passing':
-        # Passing scoring: 0.04 per yard, 4 per TD, -2 per INT
+        # Passing scoring: 0.1 per yard (1 pt per 10 yards), 6 per TD, -2 per INT
         df['fantasy_points'] = (
-            (df['pass_yards'].fillna(0) * 0.04) +
-            (df['pass_touchdowns'].fillna(0) * 4) +
+            (df['pass_yards'].fillna(0) * 0.1) +
+            (df['pass_touchdowns'].fillna(0) * 6) +
             (df['interceptions'].fillna(0) * -2)
         )
         df['fantasy_ppg'] = df['fantasy_points'] / df.groupby('player_gsis_id')['week'].transform('count')
