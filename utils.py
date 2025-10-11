@@ -221,33 +221,39 @@ def add_fantasy_scoring(df: pd.DataFrame, stat_type: str) -> pd.DataFrame:
     Returns:
         DataFrame with fantasy scoring columns added
     """
+    # Filter out week 0 (cumulative stats) - we'll aggregate our own from individual weeks
+    df = df[df['week'] != 0].copy()
+    
     if stat_type == 'passing':
-        # Passing scoring: 0.1 per yard (1 pt per 10 yards), 6 per TD, -2 per INT
+        # Passing scoring: 0.04 per yard (1 pt per 25 yards), 6 per TD, -2 per INT
         df['fantasy_points'] = (
-            (df['pass_yards'].fillna(0) * 0.1) +
+            (df['pass_yards'].fillna(0) * 0.04) +
             (df['pass_touchdowns'].fillna(0) * 6) +
             (df['interceptions'].fillna(0) * -2)
         )
-        df['fantasy_ppg'] = df['fantasy_points'] / df.groupby('player_gsis_id')['week'].transform('count')
+        # Calculate PPG as average of all weeks for each player
+        df['fantasy_ppg'] = df.groupby('player_gsis_id')['fantasy_points'].transform('mean')
         df['fantasy_points_per_attempt'] = df['fantasy_points'] / df['attempts'].replace(0, 1)
         
     elif stat_type == 'rushing':
-        # Rushing scoring: 0.1 per yard, 6 per TD
+        # Rushing scoring: 0.1 per yard (1 pt per 10 yards), 6 per TD
         df['fantasy_points'] = (
             (df['rush_yards'].fillna(0) * 0.1) +
             (df['rush_touchdowns'].fillna(0) * 6)
         )
-        df['fantasy_ppg'] = df['fantasy_points'] / df.groupby('player_gsis_id')['week'].transform('count')
+        # Calculate PPG as average of all weeks for each player
+        df['fantasy_ppg'] = df.groupby('player_gsis_id')['fantasy_points'].transform('mean')
         df['fantasy_points_per_rush'] = df['fantasy_points'] / df['rush_attempts'].replace(0, 1)
         
     elif stat_type == 'receiving':
-        # Receiving scoring (PPR): 1 per catch, 0.1 per yard, 6 per TD
+        # Receiving scoring (PPR): 1 per reception, 0.1 per yard (1 pt per 10 yards), 6 per TD
         df['fantasy_points'] = (
             (df['receptions'].fillna(0) * 1) +
             (df['yards'].fillna(0) * 0.1) +
             (df['rec_touchdowns'].fillna(0) * 6)
         )
-        df['fantasy_ppg'] = df['fantasy_points'] / df.groupby('player_gsis_id')['week'].transform('count')
+        # Calculate PPG as average of all weeks for each player
+        df['fantasy_ppg'] = df.groupby('player_gsis_id')['fantasy_points'].transform('mean')
         df['fantasy_points_per_reception'] = df['fantasy_points'] / df['receptions'].replace(0, 1)
         df['fantasy_points_per_target'] = df['fantasy_points'] / df['targets'].replace(0, 1)
     
