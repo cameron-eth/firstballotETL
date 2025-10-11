@@ -5,6 +5,13 @@ import toml
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
+# Try to load .env file if python-dotenv is available
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # python-dotenv not installed, use system env vars
+
 # Load configuration from TOML file
 CONFIG_PATH = Path(__file__).parent / "config.toml"
 
@@ -29,6 +36,7 @@ class Config:
     
     def _load_env_overrides(self):
         """Load environment variable overrides for database credentials."""
+        # Primary database
         supabase_url = os.getenv('SUPABASE_URL')
         supabase_key = os.getenv('SUPABASE_SERVICE_KEY')
         
@@ -39,6 +47,18 @@ class Config:
             self._config['database']['supabase_url'] = supabase_url
         if supabase_key:
             self._config['database']['supabase_key'] = supabase_key
+        
+        # Secondary database
+        supabase_url_2 = os.getenv('SUPABASE_URL_2')
+        supabase_key_2 = os.getenv('SUPABASE_SERVICE_KEY_2')
+        
+        if 'database_2' not in self._config:
+            self._config['database_2'] = {}
+            
+        if supabase_url_2:
+            self._config['database_2']['supabase_url_2'] = supabase_url_2
+        if supabase_key_2:
+            self._config['database_2']['supabase_key_2'] = supabase_key_2
     
     @property
     def supabase_url(self) -> Optional[str]:
@@ -54,6 +74,21 @@ class Config:
     def enable_database(self) -> bool:
         """Get database enable flag."""
         return self._config.get('database', {}).get('enable_database', True)
+    
+    @property
+    def supabase_url_2(self) -> Optional[str]:
+        """Get secondary Supabase URL."""
+        return self._config.get('database_2', {}).get('supabase_url_2', '')
+    
+    @property
+    def supabase_key_2(self) -> Optional[str]:
+        """Get secondary Supabase service key."""
+        return self._config.get('database_2', {}).get('supabase_key_2', '')
+    
+    @property
+    def enable_database_2(self) -> bool:
+        """Get secondary database enable flag."""
+        return self._config.get('database_2', {}).get('enable_database_2', True)
     
     @property
     def start_year(self) -> int:
@@ -91,13 +126,25 @@ class Config:
         return self._config['data'].get('save_to_database', True)
     
     def get_supabase_client(self):
-        """Create and return Supabase client if credentials are available."""
+        """Create and return primary Supabase client if credentials are available."""
         if not self.supabase_url or not self.supabase_key:
             return None
         
         try:
             from supabase import create_client
             return create_client(self.supabase_url, self.supabase_key)
+        except ImportError:
+            print("Warning: supabase-py not installed. Run: pip install supabase")
+            return None
+    
+    def get_supabase_client_2(self):
+        """Create and return secondary Supabase client if credentials are available."""
+        if not self.supabase_url_2 or not self.supabase_key_2:
+            return None
+        
+        try:
+            from supabase import create_client
+            return create_client(self.supabase_url_2, self.supabase_key_2)
         except ImportError:
             print("Warning: supabase-py not installed. Run: pip install supabase")
             return None

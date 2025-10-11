@@ -1,8 +1,14 @@
 [database]
-# Supabase configuration (set via environment variables)
+# Primary Supabase configuration (set via environment variables)
 supabase_url = ""  # SUPABASE_URL
 supabase_key = ""  # SUPABASE_SERVICE_KEY
 enable_database = true  # Set to false to disable DB writes
+
+[database_2]
+# Secondary Supabase configuration (set via environment variables)
+supabase_url_2 = ""  # SUPABASE_URL_2
+supabase_key_2 = ""  # SUPABASE_SERVICE_KEY_2
+enable_database_2 = true  # Set to false to disable secondary DB writes
 
 [data]
 # Data fetching configuration

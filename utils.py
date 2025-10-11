@@ -314,7 +314,8 @@ def upload_to_supabase(
     table_name: str,
     supabase_client,
     batch_size: int = 1000,
-    verbose: bool = True
+    verbose: bool = True,
+    db_label: str = "database"
 ):
     """
     Upload DataFrame to Supabase table with upsert.
@@ -325,15 +326,16 @@ def upload_to_supabase(
         supabase_client: Supabase client instance
         batch_size: Number of records per batch
         verbose: Whether to show progress
+        db_label: Label for the database (for logging purposes)
     """
     if supabase_client is None:
         if verbose:
-            print("⚠ Supabase client not configured, skipping database upload")
+            print(f"⚠ Supabase client not configured for {db_label}, skipping upload")
         return
     
     if len(df) == 0:
         if verbose:
-            print(f"No data to upload to {table_name}")
+            print(f"No data to upload to {table_name} ({db_label})")
         return
     
     # Replace NaN with None for proper NULL handling
@@ -345,8 +347,8 @@ def upload_to_supabase(
     total_batches = (len(records) + batch_size - 1) // batch_size
     
     if verbose:
-        print(f"📤 Uploading {len(records)} records to {table_name} in {total_batches} batches...")
-        batches = tqdm(range(0, len(records), batch_size), total=total_batches, desc="Uploading")
+        print(f"📤 Uploading {len(records)} records to {table_name} ({db_label}) in {total_batches} batches...")
+        batches = tqdm(range(0, len(records), batch_size), total=total_batches, desc=f"Uploading to {db_label}")
     else:
         batches = range(0, len(records), batch_size)
     
@@ -366,12 +368,43 @@ def upload_to_supabase(
         except Exception as e:
             errors.append(str(e))
             if verbose:
-                print(f"\n⚠ Error uploading batch: {e}")
+                print(f"\n⚠ Error uploading batch to {db_label}: {e}")
     
     if errors:
         if verbose:
-            print(f"⚠ Completed with {len(errors)} errors")
+            print(f"⚠ Completed {db_label} upload with {len(errors)} errors")
     else:
         if verbose:
-            print(f"✓ Successfully uploaded {uploaded_count} records to {table_name}")
+            print(f"✓ Successfully uploaded {uploaded_count} records to {table_name} ({db_label})")
+
+
+def upload_to_multiple_databases(
+    df: pd.DataFrame,
+    table_name: str,
+    supabase_clients: list,
+    db_labels: list,
+    batch_size: int = 1000,
+    verbose: bool = True
+):
+    """
+    Upload DataFrame to multiple Supabase databases.
+    
+    Args:
+        df: DataFrame to upload
+        table_name: Name of Supabase table
+        supabase_clients: List of Supabase client instances
+        db_labels: List of labels for each database (for logging)
+        batch_size: Number of records per batch
+        verbose: Whether to show progress
+    """
+    for client, label in zip(supabase_clients, db_labels):
+        if client is not None:
+            upload_to_supabase(
+                df=df,
+                table_name=table_name,
+                supabase_client=client,
+                batch_size=batch_size,
+                verbose=verbose,
+                db_label=label
+            )
 

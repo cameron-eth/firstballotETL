@@ -21,7 +21,8 @@ from utils import (
     clean_ngs_data,
     add_fantasy_scoring,
     save_dataframe,
-    upload_to_supabase
+    upload_to_supabase,
+    upload_to_multiple_databases
 )
 
 
@@ -360,7 +361,7 @@ def fetch_ngs_stats(
                 verbose=config.verbose
             )
         
-        # Upload to Supabase
+        # Upload to Supabase (both databases)
         if config.save_to_database:
             table_map = {
                 'passing': 'nfl_ngs_passing_stats',
@@ -370,14 +371,35 @@ def fetch_ngs_stats(
             table_name = table_map.get(stat_type)
             
             if table_name:
-                supabase = config.get_supabase_client()
-                upload_to_supabase(
-                    df=df,
-                    table_name=table_name,
-                    supabase_client=supabase,
-                    batch_size=config.batch_size,
-                    verbose=config.verbose
-                )
+                # Get both database clients
+                supabase_primary = config.get_supabase_client()
+                supabase_secondary = config.get_supabase_client_2()
+                
+                # Collect active clients and labels
+                clients = []
+                labels = []
+                
+                if supabase_primary and config.enable_database:
+                    clients.append(supabase_primary)
+                    labels.append("Primary DB")
+                
+                if supabase_secondary and config.enable_database_2:
+                    clients.append(supabase_secondary)
+                    labels.append("Secondary DB")
+                
+                # Upload to all configured databases
+                if clients:
+                    upload_to_multiple_databases(
+                        df=df,
+                        table_name=table_name,
+                        supabase_clients=clients,
+                        db_labels=labels,
+                        batch_size=config.batch_size,
+                        verbose=config.verbose
+                    )
+                else:
+                    if config.verbose:
+                        print("⚠ No database clients configured, skipping upload")
         
         print(f"\n✓ {stat_type.capitalize()} stats processing complete")
 
