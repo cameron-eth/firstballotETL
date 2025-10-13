@@ -8,12 +8,14 @@ import argparse
 import sys
 from datetime import datetime
 from typing import List, Optional
+from pathlib import Path
 
 from config import config
 from utils import (
     get_weekly_data,
     get_seasonal_data,
     get_ngs_data,
+    get_player_stats,
     get_play_by_play_data,
     get_weekly_roster_data,
     get_ftn_data,
@@ -22,7 +24,8 @@ from utils import (
     add_fantasy_scoring,
     save_dataframe,
     upload_to_supabase,
-    upload_to_multiple_databases
+    upload_to_multiple_databases,
+    refresh_master_stats_view
 )
 
 
@@ -68,6 +71,40 @@ def fetch_weekly_stats(years: Optional[List[int]] = None) -> None:
         save_json=config.save_to_json,
         verbose=config.verbose
     )
+    
+    # Upload to Supabase (both databases)
+    if config.save_to_database:
+        table_name = 'nfl_weekly_stats'
+        
+        # Get both database clients
+        supabase_primary = config.get_supabase_client()
+        supabase_secondary = config.get_supabase_client_2()
+        
+        # Collect active clients and labels
+        clients = []
+        labels = []
+        
+        if supabase_primary and config.enable_database:
+            clients.append(supabase_primary)
+            labels.append("Primary DB")
+        
+        if supabase_secondary and config.enable_database_2:
+            clients.append(supabase_secondary)
+            labels.append("Secondary DB")
+        
+        # Upload to all configured databases
+        if clients:
+            upload_to_multiple_databases(
+                df=df,
+                table_name=table_name,
+                supabase_clients=clients,
+                db_labels=labels,
+                batch_size=config.batch_size,
+                verbose=config.verbose
+            )
+        else:
+            if config.verbose:
+                print("⚠ No database clients configured, skipping upload")
     
     print(f"\n✓ Weekly stats processing complete")
 
@@ -224,12 +261,81 @@ def fetch_ftn_data(years: Optional[List[int]] = None) -> None:
     print(f"\n✓ FTN data processing complete")
 
 
+def fetch_player_stats(years: Optional[List[int]] = None) -> None:
+    """
+    Fetch complete player stats from nflreadpy and upload to database.
+    
+    This includes all stat types (passing + rushing + receiving) with
+    pre-calculated fantasy points in one table.
+    
+    Args:
+        years: Optional list of years to fetch. If None, uses config range.
+    """
+    print("=" * 80)
+    print("FETCHING PLAYER STATS (nflreadpy)")
+    print("=" * 80)
+    
+    if years is None:
+        years = config.get_year_range()
+    
+    # Fetch data
+    df = get_player_stats(years, verbose=config.verbose)
+    
+    print(f"\nFetched {len(df)} player stat records")
+    print(f"Sample data:")
+    print(df.head(3))
+    
+    # Upload to database
+    if config.save_to_database:
+        table_name = 'nfl_player_stats'
+        
+        # Upload to primary database
+        if config.enable_database:
+            supabase_primary = config.get_supabase_client()
+            if supabase_primary:
+                upload_to_supabase(
+                    df=df,
+                    table_name=table_name,
+                    supabase_client=supabase_primary,
+                    verbose=config.verbose,
+                    db_label="Primary DB"
+                )
+        
+        # Upload to secondary database
+        if config.enable_database_2:
+            supabase_secondary = config.get_supabase_client_2()
+            if supabase_secondary:
+                upload_to_supabase(
+                    df=df,
+                    table_name=table_name,
+                    supabase_client=supabase_secondary,
+                    verbose=config.verbose,
+                    db_label="Secondary DB"
+                )
+    
+    # Save to CSV if enabled
+    if config.save_to_csv:
+        output_dir = Path(config.output_dir)
+        output_dir.mkdir(exist_ok=True)
+        
+        years_str = '_'.join(map(str, sorted(years)))
+        filename = f"player_stats_{years_str}.csv"
+        filepath = output_dir / filename
+        
+        df.to_csv(filepath, index=False)
+        if config.verbose:
+            print(f"\nSaved to: {filepath}")
+
+
 def fetch_ngs_stats(
     stat_types: Optional[List[str]] = None,
     years: Optional[List[int]] = None
 ) -> None:
     """
-    Fetch and upload Next Gen Stats data.
+    Fetch and upload Next Gen Stats data (advanced metrics only).
+    
+    Note: Fantasy scoring is now handled by fetch_player_stats().
+    NGS data is kept for advanced metrics like target share, air yards, EPA, etc.
     
     Args:
         stat_types: Optional list of stat types ('passing', 'rushing', 'receiving').
@@ -255,99 +361,52 @@ def fetch_ngs_stats(
         # Clean data
         df = clean_ngs_data(df)
         
-        # Add fantasy scoring
-        df = add_fantasy_scoring(df, stat_type)
+        # NOTE: Fantasy scoring removed - now handled by fetch_player_stats()
+        # NGS data is kept for advanced metrics only (target share, air yards, EPA, etc.)
         
         print(f"Cleaned data: {len(df)} records")
         print(f"Columns ({len(df.columns)}): {list(df.columns)}")
         
-        # Show comprehensive tables by position
+        # Show sample NGS data
         if stat_type == 'passing':
-            print(f"\n{'='*100}")
-            print(f"QUARTERBACK STATS - Fantasy & NGS Metrics")
-            print(f"{'='*100}")
+            print(f"\n{'='*80}")
+            print(f"QB NGS Metrics Sample")
+            print(f"{'='*80}")
             
             # Filter for QBs only
             qb_df = df[df['player_position'] == 'QB'].copy()
-            top_qbs = qb_df.nlargest(15, 'fantasy_points')[[
-                'player_display_name', 'team_abbr', 'attempts', 'pass_yards', 'pass_touchdowns', 
-                'interceptions', 'fantasy_points', 'fantasy_ppg', 'fantasy_points_per_attempt',
+            top_qbs = qb_df.nlargest(10, 'pass_yards')[[
+                'player_display_name', 'team_abbr', 'attempts', 'pass_yards', 'pass_touchdowns',
                 'avg_time_to_throw', 'completion_percentage_above_expectation', 'passer_rating'
             ]].copy()
             
-            # Format numbers
-            top_qbs['fantasy_points'] = top_qbs['fantasy_points'].round(1)
-            top_qbs['fantasy_ppg'] = top_qbs['fantasy_ppg'].round(1)
-            top_qbs['fantasy_points_per_attempt'] = top_qbs['fantasy_points_per_attempt'].round(3)
-            top_qbs['avg_time_to_throw'] = top_qbs['avg_time_to_throw'].round(2)
-            top_qbs['completion_percentage_above_expectation'] = top_qbs['completion_percentage_above_expectation'].round(1)
-            top_qbs['passer_rating'] = top_qbs['passer_rating'].round(1)
-            
-            # Rename columns for display
-            top_qbs.columns = ['Player', 'Team', 'Att', 'Yds', 'TD', 'INT', 'FPts', 'PPG', 'FP/Att', 'TTT', 'CPOE', 'Rating']
             print(top_qbs.to_string(index=False))
             
         elif stat_type == 'rushing':
-            # Separate by position
-            positions = ['QB', 'RB', 'WR', 'TE']
+            print(f"\n{'='*80}")
+            print(f"RB NGS Metrics Sample")
+            print(f"{'='*80}")
             
-            for pos in positions:
-                pos_df = df[df['player_position'] == pos].copy()
-                if len(pos_df) == 0:
-                    continue
-                
-                print(f"\n{'='*100}")
-                print(f"{pos} RUSHING STATS - Fantasy & NGS Metrics")
-                print(f"{'='*100}")
-                
-                top_players = pos_df.nlargest(min(10, len(pos_df)), 'fantasy_points')[[
-                    'player_display_name', 'team_abbr', 'rush_attempts', 'rush_yards', 
-                    'avg_rush_yards', 'rush_touchdowns', 'fantasy_points', 'fantasy_ppg', 
-                    'fantasy_points_per_rush', 'efficiency', 'rush_yards_over_expected_per_att'
-                ]].copy()
-                
-                # Format numbers
-                top_players['fantasy_points'] = top_players['fantasy_points'].round(1)
-                top_players['fantasy_ppg'] = top_players['fantasy_ppg'].round(1)
-                top_players['fantasy_points_per_rush'] = top_players['fantasy_points_per_rush'].round(3)
-                top_players['avg_rush_yards'] = top_players['avg_rush_yards'].round(1)
-                top_players['efficiency'] = top_players['efficiency'].round(2)
-                top_players['rush_yards_over_expected_per_att'] = top_players['rush_yards_over_expected_per_att'].round(2)
-                
-                # Rename columns for display
-                top_players.columns = ['Player', 'Team', 'Att', 'Yds', 'YPC', 'TD', 'FPts', 'PPG', 'FP/Rush', 'Eff', 'RYOE/A']
-                print(top_players.to_string(index=False))
+            rb_df = df[df['player_position'] == 'RB'].copy()
+            top_rbs = rb_df.nlargest(10, 'rush_yards')[[
+                'player_display_name', 'team_abbr', 'rush_attempts', 'rush_yards',
+                'avg_rush_yards', 'efficiency', 'rush_yards_over_expected_per_att'
+            ]].copy()
+            
+            print(top_rbs.to_string(index=False))
                 
         elif stat_type == 'receiving':
-            # Separate by position
-            positions = ['WR', 'TE', 'RB']
+            print(f"\n{'='*80}")
+            print(f"WR NGS Metrics Sample")
+            print(f"{'='*80}")
             
-            for pos in positions:
-                pos_df = df[df['player_position'] == pos].copy()
-                if len(pos_df) == 0:
-                    continue
-                    
-                print(f"\n{'='*100}")
-                print(f"{pos} RECEIVING STATS - Fantasy & NGS Metrics")
-                print(f"{'='*100}")
-                
-                top_players = pos_df.nlargest(min(15, len(pos_df)), 'fantasy_points')[[
-                    'player_display_name', 'team_abbr', 'targets', 'receptions', 'yards', 
-                    'rec_touchdowns', 'fantasy_points', 'fantasy_ppg', 'fantasy_points_per_reception',
-                    'avg_separation', 'avg_cushion', 'catch_percentage'
-                ]].copy()
-                
-                # Format numbers
-                top_players['fantasy_points'] = top_players['fantasy_points'].round(1)
-                top_players['fantasy_ppg'] = top_players['fantasy_ppg'].round(1)
-                top_players['fantasy_points_per_reception'] = top_players['fantasy_points_per_reception'].round(2)
-                top_players['avg_separation'] = top_players['avg_separation'].round(2)
-                top_players['avg_cushion'] = top_players['avg_cushion'].round(1)
-                top_players['catch_percentage'] = top_players['catch_percentage'].round(1)
-                
-                # Rename columns for display
-                top_players.columns = ['Player', 'Team', 'Tgt', 'Rec', 'Yds', 'TD', 'FPts', 'PPG', 'FP/Rec', 'Sep', 'Cush', 'Catch%']
-                print(top_players.to_string(index=False))
+            wr_df = df[df['player_position'] == 'WR'].copy()
+            top_wrs = wr_df.nlargest(10, 'yards')[[
+                'player_display_name', 'team_abbr', 'targets', 'receptions', 'yards',
+                'avg_separation', 'avg_cushion', 'catch_percentage'
+            ]].copy()
+            
+            print(top_wrs.to_string(index=False))
         
         # Save to CSV (backup)
         if config.save_to_csv:
@@ -406,7 +465,12 @@ def fetch_ngs_stats(
 
 def fetch_all_data(years: Optional[List[int]] = None) -> None:
     """
-    Fetch all data types (weekly stats + NGS stats).
+    Fetch complete player stats and NGS stats, then refresh master view.
+    
+    Pipeline flow:
+    1. Fetch player stats from nflreadpy (complete fantasy data)
+    2. Fetch NGS stats (advanced metrics)
+    3. Refresh master_player_stats view (combines both sources)
     
     Args:
         years: Optional list of years to fetch. If None, uses config range.
@@ -419,13 +483,38 @@ def fetch_all_data(years: Optional[List[int]] = None) -> None:
     print(f"Start time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     
     try:
-        # Fetch weekly stats
-        fetch_weekly_stats(years)
+        # Step 1: Fetch complete player stats (fantasy data)
+        fetch_player_stats(years=years)
         
         print("\n")
         
-        # Fetch NGS stats
+        # Step 2: Fetch NGS stats (advanced metrics)
         fetch_ngs_stats(years=years)
+        
+        print("\n")
+        
+        # Step 3: Refresh master player stats materialized view
+        if config.save_to_database:
+            supabase_primary = config.get_supabase_client()
+            supabase_secondary = config.get_supabase_client_2()
+            
+            clients = []
+            labels = []
+            
+            if supabase_primary and config.enable_database:
+                clients.append(supabase_primary)
+                labels.append("Primary DB")
+            
+            if supabase_secondary and config.enable_database_2:
+                clients.append(supabase_secondary)
+                labels.append("Secondary DB")
+            
+            if clients:
+                refresh_master_stats_view(
+                    supabase_clients=clients,
+                    db_labels=labels,
+                    verbose=config.verbose
+                )
         
         end_time = datetime.now()
         duration = (end_time - start_time).total_seconds()

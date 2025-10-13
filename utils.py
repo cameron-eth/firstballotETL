@@ -2,9 +2,11 @@
 
 import pandas as pd
 import nfl_data_py as nfl
+import nflreadpy as nflread
 from typing import List, Optional
 from pathlib import Path
 from tqdm import tqdm
+import os
 
 
 def get_weekly_data(years: List[int], verbose: bool = True) -> pd.DataFrame:
@@ -48,6 +50,92 @@ def get_ngs_data(stat_type: str, years: List[int], verbose: bool = True) -> pd.D
     
     if verbose:
         print(f"Fetched {len(df)} NGS {stat_type} records")
+    
+    return df
+
+
+def get_player_stats(years: List[int], verbose: bool = True) -> pd.DataFrame:
+    """
+    Fetch complete player stats from nflreadpy.
+    
+    This includes all stat types (passing + rushing + receiving) in one row per player per week.
+    Fantasy points are pre-calculated by nflreadpy.
+    
+    Args:
+        years: List of years to fetch data for
+        verbose: Whether to show progress
+        
+    Returns:
+        DataFrame with complete weekly player statistics
+    """
+    if verbose:
+        print(f"Fetching player stats from nflreadpy for years: {years}")
+    
+    # Load player stats from nflreadpy (returns Polars DataFrame)
+    df_polars = nflread.load_player_stats(years)
+    
+    # Convert to pandas
+    df = df_polars.to_pandas()
+    
+    if verbose:
+        print(f"Fetched {len(df)} player stat records")
+        print(f"Columns: {len(df.columns)} total")
+    
+    # Rename columns to match our schema
+    column_mapping = {
+        'player_id': 'player_id',
+        'player_display_name': 'player_display_name',
+        'player_name': 'player_name',
+        'position': 'position',
+        'position_group': 'position_group',
+        'team': 'team',
+        'opponent_team': 'opponent_team',
+        'season': 'season',
+        'week': 'week',
+        'season_type': 'season_type',
+        'headshot_url': 'headshot_url',
+        # Passing
+        'completions': 'completions',
+        'attempts': 'attempts',
+        'passing_yards': 'passing_yards',
+        'passing_tds': 'passing_tds',
+        'passing_interceptions': 'passing_interceptions',
+        'passing_2pt_conversions': 'passing_2pt_conversions',
+        # Rushing
+        'carries': 'carries',
+        'rushing_yards': 'rushing_yards',
+        'rushing_tds': 'rushing_tds',
+        'rushing_2pt_conversions': 'rushing_2pt_conversions',
+        # Receiving
+        'receptions': 'receptions',
+        'targets': 'targets',
+        'receiving_yards': 'receiving_yards',
+        'receiving_tds': 'receiving_tds',
+        'receiving_2pt_conversions': 'receiving_2pt_conversions',
+        # Advanced metrics
+        'target_share': 'target_share',
+        'air_yards_share': 'air_yards_share',
+        # Fantasy points
+        'fantasy_points': 'fantasy_points',
+        'fantasy_points_ppr': 'fantasy_points_ppr',
+    }
+    
+    # Select and rename columns
+    columns_to_keep = [col for col in column_mapping.keys() if col in df.columns]
+    df = df[columns_to_keep].rename(columns=column_mapping)
+    
+    # Add player_gsis_id column (same as player_id in nflreadpy)
+    df['player_gsis_id'] = df['player_id']
+    
+    # Filter out rows with null player_id (defense/special teams units)
+    df = df[df['player_id'].notna()].copy()
+    
+    if verbose:
+        print(f"Prepared {len(df)} records for upload")
+        sample_player = df[df['fantasy_points_ppr'] > 0].head(1)
+        if not sample_player.empty:
+            print(f"Sample: {sample_player.iloc[0]['player_display_name']} - "
+                  f"Week {sample_player.iloc[0]['week']}: {sample_player.iloc[0]['fantasy_points_ppr']:.2f} PPR pts")
     
     return df
 
@@ -366,9 +454,15 @@ def upload_to_supabase(
         
         try:
             # Upsert to handle duplicates (based on unique constraint)
+            # Different tables have different primary keys
+            if table_name == 'nfl_player_stats':
+                conflict_key = 'player_id,season,season_type,week'
+            else:
+                conflict_key = 'player_gsis_id,season,season_type,week'
+            
             response = supabase_client.table(table_name).upsert(
                 batch_records,
-                on_conflict='player_gsis_id,season,season_type,week'
+                on_conflict=conflict_key
             ).execute()
             uploaded_count += len(batch_records)
         except Exception as e:
@@ -413,4 +507,70 @@ def upload_to_multiple_databases(
                 verbose=verbose,
                 db_label=label
             )
+
+
+def refresh_master_stats_view(supabase_clients: List, db_labels: List[str], verbose: bool = True) -> None:
+    """
+    Refresh the master_player_stats materialized view.
+    
+    This aggregates weekly stats to create season-level fantasy PPG.
+    Should be run after weekly stats are uploaded.
+    
+    Args:
+        supabase_clients: List of Supabase client instances
+        db_labels: List of labels for each database
+        verbose: Whether to show progress
+    """
+    if verbose:
+        print("\n" + "=" * 80)
+        print("REFRESHING MASTER PLAYER STATS VIEW")
+        print("=" * 80)
+    
+    # Read SQL script
+    sql_file = Path(__file__).parent / 'create_master_stats.sql'
+    
+    if not sql_file.exists():
+        print(f"⚠ SQL file not found: {sql_file}")
+        return
+    
+    with open(sql_file, 'r') as f:
+        sql_script = f.read()
+    
+    # Execute on each database
+    for client, label in zip(supabase_clients, db_labels):
+        if client is None:
+            continue
+            
+        try:
+            if verbose:
+                print(f"\n📊 Refreshing materialized view on {label}...")
+            
+            # Split into individual statements (simple split on semicolon)
+            statements = [s.strip() for s in sql_script.split(';') if s.strip() and not s.strip().startswith('--')]
+            
+            for stmt in statements:
+                if stmt and not stmt.startswith('COMMENT'):
+                    try:
+                        result = client.rpc('exec_sql', {'query': stmt}).execute()
+                    except Exception as e:
+                        # Some statements might not work via RPC, that's ok
+                        if verbose:
+                            print(f"  Note: {str(e)[:100]}")
+            
+            # Call the refresh function
+            try:
+                client.rpc('refresh_master_stats').execute()
+                if verbose:
+                    print(f"✅ Successfully refreshed master_player_stats on {label}")
+            except Exception as e:
+                # Fallback: just print instructions
+                if verbose:
+                    print(f"⚠ Could not auto-refresh on {label}: {str(e)[:100]}")
+                    print(f"   Please run this SQL manually in Supabase:")
+                    print(f"   SELECT refresh_master_stats();")
+                    
+        except Exception as e:
+            if verbose:
+                print(f"⚠ Error refreshing view on {label}: {e}")
+                print(f"   Please run the SQL script manually: {sql_file}")
 
