@@ -40,14 +40,18 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: |
-          YEAR="${{ github.event.inputs.year || '2025' }}"
-          STAT_TYPES="${{ github.event.inputs.stat_types || 'all' }}"
-          
-          if [ "$STAT_TYPES" = "all" ]; then
-            python impl.py --mode ngs --ngs-types passing rushing receiving --year $YEAR
+          # For scheduled runs, github.event.inputs is empty, so default to 2025
+          # For manual runs, use the input year or default to 2025
+          if [ -z "${{ github.event.inputs.year }}" ]; then
+            YEAR="2025"
           else
-            python impl.py --mode ngs --ngs-types $STAT_TYPES --year $YEAR
+            YEAR="${{ github.event.inputs.year }}"
           fi
+          
+          echo "Fetching data for year: $YEAR"
+          
+          # Run full pipeline to get both player stats and NGS stats, then refresh master view
+          python impl.py --mode all --year $YEAR
       
       - name: Upload CSV artifacts
         uses: actions/upload-artifact@v4
