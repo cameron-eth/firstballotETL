@@ -7,6 +7,7 @@ from typing import List, Optional
 from pathlib import Path
 from tqdm import tqdm
 import os
+import math
 
 
 def get_weekly_data(years: List[int], verbose: bool = True) -> pd.DataFrame:
@@ -292,7 +293,9 @@ def clean_ngs_data(df: pd.DataFrame) -> pd.DataFrame:
     if 'season' in df.columns:
         df['season'] = pd.to_numeric(df['season'], errors='coerce')
     
-    # Replace NaN with None for proper NULL handling in database
+    # Replace NaN, inf, and -inf with None for proper NULL handling in database
+    # This ensures JSON compliance when uploading to Supabase
+    df = df.replace([pd.NA, pd.NaT, float('nan'), float('inf'), float('-inf')], None)
     df = df.where(pd.notnull(df), None)
     
     return df
@@ -432,11 +435,19 @@ def upload_to_supabase(
             print(f"No data to upload to {table_name} ({db_label})")
         return
     
-    # Replace NaN with None for proper NULL handling
-    df_clean = df.where(pd.notnull(df), None)
+    # Replace NaN, inf, and -inf with None for proper NULL handling
+    # This ensures JSON compliance when uploading to Supabase
+    df_clean = df.replace([pd.NA, pd.NaT, float('nan'), float('inf'), float('-inf')], None)
+    df_clean = df_clean.where(pd.notnull(df_clean), None)
     
-    # Convert DataFrame to list of dicts
+    # Convert DataFrame to list of dicts, ensuring no NaN values slip through
     records = df_clean.to_dict('records')
+    
+    # Final pass: replace any remaining NaN/Inf values in records
+    for record in records:
+        for key, value in record.items():
+            if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+                record[key] = None
     
     total_batches = (len(records) + batch_size - 1) // batch_size
     

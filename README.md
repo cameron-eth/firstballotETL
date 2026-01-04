@@ -32,6 +32,12 @@ Fetches NFL **Next Gen Stats (NGS)** data and automatically:
 - Fantasy: points, PPG, points per reception
 - **27 columns** | ~497 records per season
 
+### Fantasy Rankings (Dynasty)
+- Player rankings from expert consensus (nflreadpy)
+- Dynasty superflex top 150+ rankings
+- Updated regularly for draft/trade analysis
+- **dynasty_sf_top_150 table**
+
 **Total: ~893 player records per season with fantasy + NGS metrics**
 
 ---
@@ -186,7 +192,7 @@ end_year = 2025
 
 ## 🚀 Usage Examples
 
-### Fetch Current Season
+### Fetch Current Season Stats
 ```bash
 python impl.py --mode ngs --year 2025
 ```
@@ -199,6 +205,21 @@ python impl.py --mode ngs --years 2023 2024 2025
 ### Fetch Specific Stats
 ```bash
 python impl.py --mode ngs --ngs-types passing --year 2025
+```
+
+### Update Fantasy Rankings
+```bash
+# Update dynasty rankings (draft rankings)
+python update_ff_rankings.py
+
+# Fetch weekly rankings instead
+python update_ff_rankings.py --type week
+
+# Dry run to preview data without uploading
+python update_ff_rankings.py --dry-run
+
+# Keep top 200 players only
+python update_ff_rankings.py --top-n 200
 ```
 
 ### Build Historical Database

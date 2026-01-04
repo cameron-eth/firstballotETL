@@ -16,6 +16,12 @@ python-dotenv>=1.0.0
 # Data processing
 pyarrow>=12.0.0
 
+# HTTP requests
+requests>=2.28.0
+
 # Utilities
 tqdm>=4.65.0
+
+# College Football Data API
+cfbd>=5.13.2
 

@@ -9,6 +9,7 @@ import sys
 from datetime import datetime
 from typing import List, Optional
 from pathlib import Path
+import pandas as pd
 
 from config import config
 from utils import (
@@ -401,6 +402,8 @@ def fetch_ngs_stats(
             print(f"{'='*80}")
             
             wr_df = df[df['player_position'] == 'WR'].copy()
+            # Convert yards to numeric in case it's object dtype
+            wr_df['yards'] = pd.to_numeric(wr_df['yards'], errors='coerce')
             top_wrs = wr_df.nlargest(10, 'yards')[[
                 'player_display_name', 'team_abbr', 'targets', 'receptions', 'yards',
                 'avg_separation', 'avg_cushion', 'catch_percentage'
@@ -510,11 +513,18 @@ def fetch_all_data(years: Optional[List[int]] = None) -> None:
                 labels.append("Secondary DB")
             
             if clients:
-                refresh_master_stats_view(
-                    supabase_clients=clients,
-                    db_labels=labels,
-                    verbose=config.verbose
-                )
+                # Refresh master stats view using RPC function (works even if SQL file missing)
+                for client, label in zip(clients, labels):
+                    try:
+                        if config.verbose:
+                            print(f"\n📊 Refreshing master_player_stats view on {label}...")
+                        result = client.rpc('refresh_master_stats').execute()
+                        if config.verbose:
+                            print(f"✅ Successfully refreshed master_player_stats on {label}")
+                    except Exception as e:
+                        if config.verbose:
+                            print(f"⚠ Could not refresh master_player_stats on {label}: {str(e)[:100]}")
+                            print(f"   Note: View refresh may need to be done manually in Supabase SQL editor")
         
         end_time = datetime.now()
         duration = (end_time - start_time).total_seconds()

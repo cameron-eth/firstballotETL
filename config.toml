@@ -13,8 +13,8 @@ enable_database_2 = true  # Set to false to disable secondary DB writes
 [data]
 # Data fetching configuration
 start_year = 2020
-end_year = 2024
-current_season = 2024
+end_year = 2025
+current_season = 2025
 
 # Output settings
 output_dir = "data_output"
