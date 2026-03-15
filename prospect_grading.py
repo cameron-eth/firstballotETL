@@ -93,7 +93,13 @@ def get_grade_weights(
                 return RECENT_DRAFT_CAP_HEAVY_WEIGHTS
             return DRAFTED_CLASS_WEIGHTS
 
-        if year is not None and year >= 2026:
+        # Current draft year without verified capital yet — treat like a
+        # recently-drafted class so college tape & estimated picks drive the grade.
+        if year is not None and year == current_year:
+            return RECENT_DRAFT_CAP_HEAVY_WEIGHTS
+
+        # Only truly future classes (next year+) get the lighter future weights.
+        if year is not None and year > current_year:
             return FUTURE_GRADE_WEIGHTS
     except Exception:
         pass

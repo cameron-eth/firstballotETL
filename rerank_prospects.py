@@ -140,7 +140,9 @@ def recalculate_grade(prospect: dict) -> dict:
             draft_score = max(35.0, score_draft_projection(er, ep) - 8.0)
             draft_round, draft_pick = er, ep
         elif int(draft_year) == current_year:
-            draft_score = 72.0
+            # Current draft class: use full rank-estimated capital, no compression.
+            draft_round, draft_pick = estimate_draft_round_from_rank(current_rank, draft_year)
+            draft_score = score_draft_projection(draft_round, draft_pick)
         else:
             # Future classes: estimate from rank, but apply uncertainty discount.
             draft_round, draft_pick = estimate_draft_round_from_rank(current_rank, draft_year)

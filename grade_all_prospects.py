@@ -133,8 +133,11 @@ def grade_prospect(prospect: dict) -> dict:
             draft_score = max(35.0, score_draft_projection(er, ep) - 8.0)
             draft_round, draft_pick = er, ep
         elif int(draft_year) == current_year:
-            # Neutral-not-penalized score for current class awaiting draft outcomes
-            draft_score = 72.0
+            # Current draft class: combine just ran, being drafted this spring.
+            # Use full rank-estimated capital — no compression, no haircut.
+            # These are real players with real tape; only missing the final pick slot.
+            draft_round, draft_pick = estimate_draft_round_from_rank(rank, draft_year)
+            draft_score = score_draft_projection(draft_round, draft_pick)
         else:
             # Future classes: estimate from rank, but apply uncertainty discount.
             # A rank-based projection is NOT the same as verified draft capital.
