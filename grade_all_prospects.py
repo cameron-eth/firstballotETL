@@ -204,23 +204,6 @@ def grade_prospect(prospect: dict) -> dict:
 
     overall, _ = apply_star_effect(prospect.get('name'), overall, draft_year, rank=rank)
 
-    # ── NFL career outcome blend for historical prospects ──
-    # When nfl_outcome_score is available, blend it into the grade so
-    # late-round starters (Malik Willis) get credit for NFL success.
-    # Blend weight increases with seasons played: 1 season = 20%, 3+ = 40%.
-    nfl_outcome = prospect.get('nfl_outcome_score')
-    nfl_seasons = prospect.get('nfl_seasons_played') or 0
-    if nfl_outcome is not None and int(draft_year) < current_year:
-        nfl_outcome = float(nfl_outcome)
-        # Weight increases with NFL track record
-        if nfl_seasons >= 3:
-            nfl_weight = 0.40
-        elif nfl_seasons >= 2:
-            nfl_weight = 0.30
-        else:
-            nfl_weight = 0.20
-        overall = overall * (1.0 - nfl_weight) + nfl_outcome * nfl_weight
-
     overall = round(overall, 2)
     
     # Determine tier

@@ -189,8 +189,7 @@ def recalculate_grade(prospect: dict) -> dict:
         overall = 60.0 + (overall - 60.0) * 1.25
         overall = min(overall, 100.0)
 
-    # ── Future classes: confidence-based evidence regression ──
-    # Regress toward conservative prior based on verified evidence.
+    # ── Future classes: strong completeness penalty + hard ceiling ──
     if int(draft_year) > current_year:
         has_hs = bool(hs_stars or hs_rank or hs_rating)
         has_production = bool(college_stats and college_games and college_games > 0)
@@ -204,19 +203,6 @@ def recalculate_grade(prospect: dict) -> dict:
         overall = prior + (overall - prior) * blend
 
     overall, _ = apply_star_effect(prospect.get('name'), overall, draft_year, rank=current_rank)
-
-    # ── NFL career outcome blend ──
-    nfl_outcome = prospect.get('nfl_outcome_score')
-    nfl_seasons = prospect.get('nfl_seasons_played') or 0
-    if nfl_outcome is not None and int(draft_year) < current_year:
-        nfl_outcome = float(nfl_outcome)
-        if nfl_seasons >= 3:
-            nfl_weight = 0.40
-        elif nfl_seasons >= 2:
-            nfl_weight = 0.30
-        else:
-            nfl_weight = 0.20
-        overall = overall * (1.0 - nfl_weight) + nfl_outcome * nfl_weight
 
     overall = round(overall, 2)
     
