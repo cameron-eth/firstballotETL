@@ -110,6 +110,55 @@ def get_grade_weights(
 # so top-ranked stars separate from lower-ranked ones instead of clustering.
 # Max nudge of 3 pts for rank 1, decaying by 0.4 per rank, zero at rank 8+.
 STAR_EFFECT_MAX_NUDGE = 3.0
+
+# ==============================================================================
+# MANUAL EXPERT BONUSES
+# Expert scouts can assign an additive bonus to specific prospects to reflect
+# intangibles, dynasty community consensus, or film grades the model can't see.
+# Keyed by normalized player name, valued by draft_year.
+# These are applied AFTER all model components and star nudges.
+# Capped at 100.0.
+# ==============================================================================
+
+MANUAL_EXPERT_BONUSES: dict[str, dict] = {
+    # 2027 class — expert consensus adjustments
+    'jeremiahsmith':   {'draft_year': 2027, 'bonus': 16.0},
+    'camcoleman':      {'draft_year': 2027, 'bonus': 14.0},
+    'ahmadhardy':      {'draft_year': 2027, 'bonus': 13.0},
+    'kewanlacy':       {'draft_year': 2027, 'bonus': 12.0},
+    'isaacbrown':      {'draft_year': 2027, 'bonus': 11.0},
+    'issacbrown':      {'draft_year': 2027, 'bonus': 11.0},  # alternate spelling
+    'juliansayin':     {'draft_year': 2027, 'bonus': 10.0},
+    'nicholassingleton': {'draft_year': 2027, 'bonus': 7.0},
+}
+
+
+def apply_expert_bonus(
+    name: Optional[str],
+    overall_grade: float,
+    draft_year: Optional[int] = None,
+) -> Tuple[float, float]:
+    """
+    Apply a manual expert bonus to a prospect's grade.
+
+    Returns:
+        (adjusted_grade, bonus_applied)
+    """
+    key = normalize_player_name(name)
+    entry = MANUAL_EXPERT_BONUSES.get(key)
+    if not entry:
+        return (overall_grade, 0.0)
+
+    # Only apply if the draft year matches
+    try:
+        if draft_year is not None and int(draft_year) != entry['draft_year']:
+            return (overall_grade, 0.0)
+    except Exception:
+        return (overall_grade, 0.0)
+
+    bonus = float(entry['bonus'])
+    adjusted = min(100.0, overall_grade + bonus)
+    return (adjusted, bonus)
 STAR_EFFECT_PROSPECTS = {
     'jeremiahsmith',
     'kewanlacy',
@@ -685,7 +734,8 @@ def calculate_prospect_grade(
         overall = prior + (overall - prior) * blend
 
     overall, _ = apply_star_effect(name, overall, draft_year, rank)
-    
+    overall, _ = apply_expert_bonus(name, overall, draft_year)
+
     return {
         'overall_grade': round(overall, 1),
         'hs_recruiting_score': hs_score,

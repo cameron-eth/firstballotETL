@@ -36,6 +36,7 @@ from prospect_grading import (
     GRADE_WEIGHTS,
     get_grade_weights,
     apply_star_effect,
+    apply_expert_bonus,
     STAR_EFFECT_PROSPECTS,
     normalize_player_name,
 )
@@ -205,6 +206,7 @@ def recalculate_grade(prospect: dict) -> dict:
         overall = prior + (overall - prior) * blend
 
     overall, _ = apply_star_effect(prospect.get('name'), overall, draft_year, rank=current_rank)
+    overall, _ = apply_expert_bonus(prospect.get('name'), overall, draft_year)
 
     overall = round(overall, 2)
     
