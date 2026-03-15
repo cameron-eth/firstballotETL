@@ -9,7 +9,9 @@ import os
 import sys
 import time
 import argparse
-from typing import List, Dict, Optional, Tuple
+import hashlib
+import re
+from typing import List, Dict, Optional, Tuple, Any
 from datetime import datetime
 import pandas as pd
 import numpy as np
@@ -508,7 +510,8 @@ class CollegeRankingPipeline:
         position: str,
         stats: Optional[Dict],
         tier: str,
-        nfl_players_df: pd.DataFrame
+        nfl_players_df: pd.DataFrame,
+        prospect_profile: Optional[Dict[str, Any]] = None
     ) -> List[str]:
         """
         Find NFL player comparisons based on similar statistical profiles.
@@ -526,75 +529,100 @@ class CollegeRankingPipeline:
         if stats is None or nfl_players_df.empty:
             return []
         
-        # Filter NFL players by position and similar tier
-        nfl_filtered = nfl_players_df[
-            (nfl_players_df['position'] == position.upper()) &
-            (nfl_players_df['games_played'] >= 8)  # Minimum sample size
+        nfl_profiles = self._build_nfl_profiles(nfl_players_df)
+        if nfl_profiles.empty:
+            return []
+
+        college_profile = self._extract_college_profile(position, stats, tier, prospect_profile)
+
+        # Use richer NFL profile rows instead of single-season rows.
+        nfl_filtered = nfl_profiles[
+            (nfl_profiles['position'] == position.upper()) &
+            (nfl_profiles['games_total'] >= 16)
         ].copy()
-        
         if nfl_filtered.empty:
             return []
         
-        # Calculate similarity scores
         similarities = []
-        
         for _, nfl_player in nfl_filtered.iterrows():
-            score = self._calculate_similarity(stats, nfl_player, position)
+            score = self._calculate_similarity(college_profile, nfl_player, position, tier)
             if score > 0:
                 similarities.append({
                     'name': nfl_player.get('player_display_name', 'Unknown'),
-                    'score': score
+                    'score': score,
+                    'career_ppg': self._safe_float(nfl_player.get('career_ppg')),
+                    'peak_ppg': self._safe_float(nfl_player.get('peak_ppg')),
                 })
         
-        # Sort by similarity and return top 3
-        similarities.sort(key=lambda x: x['score'], reverse=True)
-        return [comp['name'] for comp in similarities[:3]]
+        return self._select_diverse_comps(similarities, top_k=3)
     
     def _calculate_similarity(
         self,
-        college_stats: Dict,
+        college_profile: Dict,
         nfl_player: pd.Series,
-        position: str
+        position: str,
+        tier: str
     ) -> float:
-        """Calculate similarity score between college stats and NFL player."""
-        score = 0.0
-        
-        if position == 'QB':
-            # Compare passing stats
-            if 'pass_yds_per_game' in college_stats and 'fantasy_ppg' in nfl_player:
-                college_ppg = college_stats.get('pass_yds_per_game', 0) / 25  # Rough conversion
-                nfl_ppg = nfl_player.get('fantasy_ppg', 0) or 0
-                if nfl_ppg > 0:
-                    score += 1.0 - abs(college_ppg - nfl_ppg) / max(college_ppg, nfl_ppg)
-            
-            # Compare completion percentage
-            if 'completion_pct' in college_stats:
-                college_comp = college_stats['completion_pct']
-                # NFL completion % would need to be fetched separately
-                # For now, use fantasy PPG as proxy
-                score += 0.5
-        
-        elif position in ['RB', 'WR', 'TE']:
-            # Compare receiving stats
-            if 'rec_yds_per_game' in college_stats and 'fantasy_ppg' in nfl_player:
-                college_ppg = college_stats.get('rec_yds_per_game', 0) / 10  # Rough conversion
-                nfl_ppg = nfl_player.get('fantasy_ppg', 0) or 0
-                if nfl_ppg > 0:
-                    score += 1.0 - abs(college_ppg - nfl_ppg) / max(college_ppg, nfl_ppg)
-            
-            # Compare rushing stats for RB
-            if position == 'RB' and 'rush_yds_per_game' in college_stats:
-                college_rush = college_stats['rush_yds_per_game']
-                # Use fantasy PPG as proxy for NFL rushing production
-                score += 0.3
-        
+        """
+        Calculate similarity from position-aware college signals and multi-season NFL profiles.
+        """
+        target_ppg = self._safe_float(college_profile.get('projected_ppg'))
+        college_upside = self._safe_float(college_profile.get('upside_signal'))
+        college_efficiency = self._safe_float(college_profile.get('efficiency_signal'))
+        college_archetype = self._safe_float(college_profile.get('archetype_signal'))
+        college_volume = self._safe_float(college_profile.get('volume_signal'))
+        college_size = self._safe_float(college_profile.get('size_signal'))
+        college_speed = self._safe_float(college_profile.get('speed_signal'))
+
+        career_ppg = self._safe_float(nfl_player.get('career_ppg'))
+        peak_ppg = self._safe_float(nfl_player.get('peak_ppg'))
+        recent_ppg = self._safe_float(nfl_player.get('recent_ppg'))
+        consistency = self._safe_float(nfl_player.get('consistency'))
+        games_total = self._safe_float(nfl_player.get('games_total'))
+        nfl_upside = self._safe_float(nfl_player.get('upside'))
+        nfl_archetype = self._safe_float(nfl_player.get('archetype_signal'))
+        nfl_volume = self._safe_float(nfl_player.get('volume_signal'))
+        nfl_size = self._safe_float(nfl_player.get('size_signal'))
+        nfl_speed = self._safe_float(nfl_player.get('speed_signal'))
+
+        # Similarity components (all in [0,1])
+        ppg_fit = 1.0 - abs(target_ppg - career_ppg) / max(target_ppg, career_ppg, 1.0)
+        recent_fit = 1.0 - abs(target_ppg - recent_ppg) / max(target_ppg, recent_ppg, 1.0)
+        upside_fit = 1.0 - abs(college_upside - nfl_upside)
+        efficiency_fit = 1.0 - abs(college_efficiency - consistency)
+        archetype_fit = self._fit_similarity(college_archetype, nfl_archetype, neutral=0.58)
+        volume_fit = self._fit_similarity(college_volume, nfl_volume, neutral=0.55)
+        size_fit = self._fit_similarity(college_size, nfl_size, neutral=0.55)
+        speed_fit = self._fit_similarity(college_speed, nfl_speed, neutral=0.55)
+
+        tier_target = self._tier_target_ppg(position, tier)
+        tier_fit = 1.0 - abs(tier_target - peak_ppg) / max(tier_target, peak_ppg, 1.0)
+
+        # Light durability signal prevents tiny-sample spikes from dominating.
+        durability = min(games_total / 60.0, 1.0)
+
+        # Put materially more emphasis on body-profile alignment.
+        score = (
+            0.24 * ppg_fit +
+            0.09 * recent_fit +
+            0.09 * upside_fit +
+            0.07 * efficiency_fit +
+            0.07 * tier_fit +
+            0.08 * durability +
+            0.10 * archetype_fit +
+            0.07 * volume_fit +
+            0.13 * size_fit +
+            0.06 * speed_fit
+        )
         return max(0.0, min(1.0, score))
     
     def find_tier_based_comps(
         self,
         position: str,
         tier: str,
-        nfl_players_df: pd.DataFrame
+        nfl_players_df: pd.DataFrame,
+        player_name: Optional[str] = None,
+        prospect_profile: Optional[Dict[str, Any]] = None
     ) -> List[str]:
         """
         Find NFL comparisons based on tier and position when stats aren't available.
@@ -607,40 +635,455 @@ class CollegeRankingPipeline:
         Returns:
             List of NFL player names (max 3)
         """
-        # Filter NFL players by position
-        nfl_filtered = nfl_players_df[
-            (nfl_players_df['position'] == position.upper()) &
-            (nfl_players_df['games_played'] >= 8)
+        nfl_profiles = self._build_nfl_profiles(nfl_players_df)
+        if nfl_profiles.empty:
+            return []
+
+        nfl_filtered = nfl_profiles[
+            (nfl_profiles['position'] == position.upper()) &
+            (nfl_profiles['games_total'] >= 16)
         ].copy()
-        
         if nfl_filtered.empty:
             return []
         
-        # Map tier to fantasy PPG ranges for comparison
-        tier_ppg_ranges = {
-            'Tier 1': (18, 30),  # Elite prospects -> elite NFL players
-            'Tier 2': (15, 22),  # First round -> high-end starters
-            'Tier 3': (12, 18),  # Early 2nd -> solid starters
-            'Tier 4': (8, 15),   # Late 2nd/Early 3rd -> flex players
-            'Tier 5': (0, 12),   # Mid-late round -> depth players
+        tier_target = self._tier_target_ppg(position, tier)
+        grade_bump = 0.0
+        if prospect_profile:
+            grade = self._safe_float(prospect_profile.get('overall_grade'))
+            if grade > 0:
+                grade_bump = (grade - 85.0) * 0.12
+        target_ppg = max(4.0, tier_target + grade_bump)
+        peak_target = target_ppg + 2.0
+        college_profile = self._extract_college_profile(
+            position, {}, tier, prospect_profile=prospect_profile
+        )
+        college_size = self._safe_float(college_profile.get('size_signal'))
+        college_speed = self._safe_float(college_profile.get('speed_signal'))
+
+        candidates = []
+        for _, row in nfl_filtered.iterrows():
+            career_ppg = self._safe_float(row.get('career_ppg'))
+            peak_ppg = self._safe_float(row.get('peak_ppg'))
+            recent_ppg = self._safe_float(row.get('recent_ppg'))
+            games_total = self._safe_float(row.get('games_total'))
+
+            ppg_fit = 1.0 - abs(target_ppg - career_ppg) / max(target_ppg, career_ppg, 1.0)
+            peak_fit = 1.0 - abs(peak_target - peak_ppg) / max(peak_target, peak_ppg, 1.0)
+            recent_fit = 1.0 - abs(target_ppg - recent_ppg) / max(target_ppg, recent_ppg, 1.0)
+            durability = min(games_total / 60.0, 1.0)
+            size_fit = self._fit_similarity(
+                college_size, self._safe_float(row.get('size_signal')), neutral=0.56
+            )
+            speed_fit = self._fit_similarity(
+                college_speed, self._safe_float(row.get('speed_signal')), neutral=0.56
+            )
+
+            score = (
+                0.46 * ppg_fit +
+                0.16 * peak_fit +
+                0.12 * recent_fit +
+                0.10 * durability +
+                0.11 * size_fit +
+                0.05 * speed_fit
+            )
+
+            if player_name:
+                tie_break = int(hashlib.md5(f"{player_name}:{row.get('player_display_name','')}".encode('utf-8')).hexdigest()[:6], 16)
+                score += (tie_break % 1000) / 1_000_000.0
+
+            candidates.append({
+                'name': row.get('player_display_name', 'Unknown'),
+                'score': max(0.0, min(1.0, score)),
+                'career_ppg': career_ppg,
+                'peak_ppg': peak_ppg,
+            })
+
+        return self._select_diverse_comps(candidates, top_k=3)
+
+    def _safe_float(self, value: Any, default: float = 0.0) -> float:
+        """Safely parse numbers that may be null/strings."""
+        try:
+            parsed = float(value)
+            if np.isnan(parsed):
+                return default
+            return parsed
+        except Exception:
+            return default
+
+    def _normalize_person_name(self, name: Any) -> str:
+        s = str(name or '').lower().replace('’', "'")
+        s = re.sub(r"\b(jr|sr|ii|iii|iv|v)\b\.?", '', s)
+        return re.sub(r'[^a-z0-9]+', '', s)
+
+    def _height_to_inches(self, value: Any) -> float:
+        """Normalize common height formats to inches."""
+        if value is None:
+            return 0.0
+        if isinstance(value, (int, float)):
+            v = float(value)
+            return v if v > 0 else 0.0
+        s = str(value).strip().lower()
+        if not s:
+            return 0.0
+        # 6-2 / 6'2" / 6 2
+        import re
+        m = re.match(r"^\s*(\d)\s*[-'\s]\s*(\d{1,2})", s)
+        if m:
+            return float(int(m.group(1)) * 12 + int(m.group(2)))
+        # 74 -> inches as string
+        try:
+            v = float(s)
+            return v if v > 0 else 0.0
+        except Exception:
+            return 0.0
+
+    def _fit_similarity(self, a: float, b: float, neutral: float = 0.55) -> float:
+        """Distance-based similarity helper that returns a neutral score when either side is missing."""
+        if a <= 0 or b <= 0:
+            return max(0.0, min(1.0, neutral))
+        return max(0.0, min(1.0, 1.0 - abs(a - b)))
+
+    def _tier_target_ppg(self, position: str, tier: str) -> float:
+        """Position-aware target PPG by tier."""
+        tier_targets = {
+            'QB': {'Tier 1': 22.0, 'Tier 2': 19.0, 'Tier 3': 16.0, 'Tier 4': 13.0, 'Tier 5': 10.0},
+            'RB': {'Tier 1': 18.0, 'Tier 2': 15.0, 'Tier 3': 12.0, 'Tier 4': 9.0, 'Tier 5': 7.0},
+            'WR': {'Tier 1': 17.0, 'Tier 2': 14.0, 'Tier 3': 11.0, 'Tier 4': 8.5, 'Tier 5': 6.5},
+            'TE': {'Tier 1': 14.0, 'Tier 2': 11.5, 'Tier 3': 9.5, 'Tier 4': 7.5, 'Tier 5': 6.0},
         }
-        
-        min_ppg, max_ppg = tier_ppg_ranges.get(tier, (0, 20))
-        
-        # Filter by fantasy PPG range
-        nfl_filtered = nfl_filtered[
-            (nfl_filtered['fantasy_ppg'] >= min_ppg) &
-            (nfl_filtered['fantasy_ppg'] <= max_ppg)
-        ]
-        
-        if nfl_filtered.empty:
+        position_map = tier_targets.get(position.upper(), tier_targets['WR'])
+        return self._safe_float(position_map.get(tier, position_map['Tier 3']), default=10.0)
+
+    def _extract_college_profile(
+        self,
+        position: str,
+        stats: Dict[str, Any],
+        tier: str,
+        prospect_profile: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, float]:
+        """
+        Build a normalized college profile used to score NFL comps.
+        """
+        stats = stats or {}
+        games = max(
+            self._safe_float(stats.get('total_games')),
+            self._safe_float(stats.get('games')),
+            1.0
+        )
+
+        pass_yds_pg = self._safe_float(stats.get('pass_yds_per_game'))
+        if pass_yds_pg <= 0:
+            pass_yds_pg = self._safe_float(stats.get('pass_yds')) / games
+
+        rush_yds_pg = self._safe_float(stats.get('rush_yds_per_game'))
+        if rush_yds_pg <= 0:
+            rush_yds_pg = self._safe_float(stats.get('rush_yds')) / games
+
+        rec_yds_pg = self._safe_float(stats.get('rec_yds_per_game'))
+        if rec_yds_pg <= 0:
+            rec_yds_pg = self._safe_float(stats.get('rec_yds')) / games
+
+        rec_pg = self._safe_float(stats.get('rec_per_game'))
+        if rec_pg <= 0:
+            rec_pg = self._safe_float(stats.get('rec')) / games
+
+        completion_pct = self._safe_float(stats.get('completion_pct'))
+        if completion_pct <= 0:
+            pass_att = self._safe_float(stats.get('pass_att'))
+            pass_comp = self._safe_float(stats.get('pass_comp'))
+            completion_pct = (pass_comp / pass_att * 100.0) if pass_att > 0 else 0.0
+
+        yards_per_catch = self._safe_float(stats.get('yards_per_catch'))
+        if yards_per_catch <= 0:
+            rec_total = max(self._safe_float(stats.get('rec')), 1.0)
+            yards_per_catch = self._safe_float(stats.get('rec_yds')) / rec_total
+
+        pass_tds_pg = self._safe_float(stats.get('pass_tds')) / games
+
+        tier_target = self._tier_target_ppg(position, tier)
+        prospect_weight = self._safe_float((prospect_profile or {}).get('weight'))
+        prospect_height = self._safe_float((prospect_profile or {}).get('height'))
+
+        forty = 0.0
+        for k in ('forty', 'forty_time', 'fortyTime', '40yd'):
+            v = self._safe_float(stats.get(k))
+            if v > 0:
+                forty = v
+                break
+        vertical = 0.0
+        for k in ('vertical', 'vertical_jump', 'vert'):
+            v = self._safe_float(stats.get(k))
+            if v > 0:
+                vertical = v
+                break
+
+        upside_signal = 0.45
+        efficiency_signal = 0.45
+        production_proxy = tier_target
+        archetype_signal = 0.50
+        volume_signal = 0.50
+
+        pos = position.upper()
+        if pos == 'QB':
+            production_proxy = pass_yds_pg / 18.0 + rush_yds_pg / 40.0
+            upside_signal = (
+                0.50 * min(pass_tds_pg / 3.0, 1.0) +
+                0.30 * min(rush_yds_pg / 70.0, 1.0) +
+                0.20 * min(pass_yds_pg / 320.0, 1.0)
+            )
+            efficiency_signal = min(completion_pct / 70.0, 1.0)
+            archetype_signal = min(rush_yds_pg / 70.0, 1.0)
+            volume_signal = min(pass_yds_pg / 320.0, 1.0)
+        elif pos == 'RB':
+            production_proxy = rush_yds_pg / 10.0 + rec_yds_pg / 22.0 + rec_pg * 0.60
+            upside_signal = (
+                0.45 * min(rush_yds_pg / 120.0, 1.0) +
+                0.35 * min(rec_yds_pg / 50.0, 1.0) +
+                0.20 * min(rec_pg / 4.0, 1.0)
+            )
+            touches = max(self._safe_float(stats.get('rush_att')) + self._safe_float(stats.get('rec')), 1.0)
+            ypt = (self._safe_float(stats.get('rush_yds')) + self._safe_float(stats.get('rec_yds'))) / touches
+            efficiency_signal = min(ypt / 6.0, 1.0)
+            archetype_signal = rec_yds_pg / max(rec_yds_pg + rush_yds_pg, 1.0)
+            volume_signal = min((rush_yds_pg + rec_yds_pg) / 120.0, 1.0)
+        elif pos == 'TE':
+            production_proxy = rec_yds_pg / 8.5 + rec_pg * 0.45
+            upside_signal = (
+                0.55 * min(rec_yds_pg / 80.0, 1.0) +
+                0.25 * min(rec_pg / 6.0, 1.0) +
+                0.20 * min(yards_per_catch / 14.0, 1.0)
+            )
+            efficiency_signal = min(yards_per_catch / 15.0, 1.0)
+            archetype_signal = min(yards_per_catch / 14.5, 1.0)
+            volume_signal = min(rec_pg / 6.0, 1.0)
+        else:  # WR and fallback
+            production_proxy = rec_yds_pg / 9.0 + rec_pg * 0.50
+            upside_signal = (
+                0.55 * min(rec_yds_pg / 110.0, 1.0) +
+                0.25 * min(rec_pg / 7.0, 1.0) +
+                0.20 * min(yards_per_catch / 17.0, 1.0)
+            )
+            efficiency_signal = min(yards_per_catch / 18.0, 1.0)
+            archetype_signal = min(yards_per_catch / 17.0, 1.0)
+            volume_signal = min(rec_pg / 7.0, 1.0)
+
+        projected_ppg = 0.55 * tier_target + 0.35 * production_proxy + 0.10 * (tier_target + upside_signal * 3.0)
+        projected_ppg = max(4.0, min(projected_ppg, 30.0))
+
+        ideal_weights = {'QB': 220.0, 'RB': 212.0, 'WR': 205.0, 'TE': 245.0}
+        ideal_heights = {'QB': 75.0, 'RB': 71.0, 'WR': 74.0, 'TE': 77.0}
+        ideal_weight = ideal_weights.get(pos, 210.0)
+        ideal_height = ideal_heights.get(pos, 73.0)
+
+        # Use distance-to-ideal sizing (not just "bigger is better") for better nuance.
+        weight_fit = (
+            max(0.0, 1.0 - abs(prospect_weight - ideal_weight) / 28.0)
+            if prospect_weight > 0
+            else 0.0
+        )
+        height_fit = (
+            max(0.0, 1.0 - abs(prospect_height - ideal_height) / 3.5)
+            if prospect_height > 0
+            else 0.0
+        )
+        size_signal = 0.0
+        if weight_fit > 0 or height_fit > 0:
+            size_signal = (0.58 * weight_fit) + (0.42 * height_fit)
+            size_signal = max(0.22, min(size_signal, 1.0))
+
+        speed_from_forty = max(0.0, min((5.0 - forty) / 0.8, 1.0)) if forty > 0 else 0.0
+        speed_from_vertical = max(0.0, min(vertical / 42.0, 1.0)) if vertical > 0 else 0.0
+        speed_signal = (
+            max(speed_from_forty, speed_from_vertical)
+            if speed_from_forty > 0 or speed_from_vertical > 0
+            else 0.0
+        )
+
+        return {
+            'projected_ppg': projected_ppg,
+            'upside_signal': max(0.0, min(upside_signal, 1.0)),
+            'efficiency_signal': max(0.0, min(efficiency_signal, 1.0)),
+            'archetype_signal': max(0.0, min(archetype_signal, 1.0)),
+            'volume_signal': max(0.0, min(volume_signal, 1.0)),
+            'size_signal': max(0.0, min(size_signal, 1.0)),
+            'speed_signal': max(0.0, min(speed_signal, 1.0)),
+        }
+
+    def _build_nfl_profiles(self, nfl_players_df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Aggregate seasonal NFL rows into player profiles (career, peak, trend, consistency).
+        """
+        if nfl_players_df.empty:
+            return pd.DataFrame()
+
+        required = {'player_display_name', 'position', 'fantasy_ppg', 'games_played'}
+        if not required.issubset(set(nfl_players_df.columns)):
+            return pd.DataFrame()
+
+        df = nfl_players_df.copy()
+        df['fantasy_ppg'] = pd.to_numeric(df['fantasy_ppg'], errors='coerce').fillna(0.0)
+        df['games_played'] = pd.to_numeric(df['games_played'], errors='coerce').fillna(0.0)
+        for metric_col in [
+            'wt',
+            'weight',
+            'ht',
+            'height',
+            'forty',
+            'vertical',
+            'passing_yards_per_game',
+            'rushing_yards_per_game',
+            'receiving_yards_per_game',
+            'receptions_per_game',
+            'targets_per_game',
+            'yards_per_target_lag1',
+        ]:
+            if metric_col not in df.columns:
+                df[metric_col] = np.nan
+            else:
+                if metric_col in {'ht', 'height'}:
+                    df[metric_col] = df[metric_col].apply(self._height_to_inches)
+                else:
+                    df[metric_col] = pd.to_numeric(df[metric_col], errors='coerce')
+        if 'season' in df.columns:
+            df['season'] = pd.to_numeric(df['season'], errors='coerce').fillna(0).astype(int)
+        else:
+            df['season'] = 0
+
+        profiles: List[Dict[str, Any]] = []
+        grouped = df.groupby(['player_display_name', 'position'], dropna=False)
+        for (name, position), g in grouped:
+            g = g[g['games_played'] > 0].copy()
+            if g.empty:
+                continue
+
+            games_total = float(g['games_played'].sum())
+            if games_total <= 0:
+                continue
+
+            career_ppg = float((g['fantasy_ppg'] * g['games_played']).sum() / games_total)
+            peak_ppg = float(g['fantasy_ppg'].max())
+            floor_ppg = float(g['fantasy_ppg'].min())
+            seasons = int(g['season'].nunique()) if 'season' in g.columns else int(len(g))
+
+            season_min = int(g['season'].min()) if not g['season'].empty else 0
+            recency_weight = (g['season'] - season_min + 1).astype(float) * g['games_played']
+            recency_den = float(recency_weight.sum())
+            recent_ppg = float((g['fantasy_ppg'] * recency_weight).sum() / recency_den) if recency_den > 0 else career_ppg
+
+            season_std = float(g['fantasy_ppg'].std(ddof=0)) if len(g) > 1 else 0.0
+            consistency = max(0.0, min(1.0, 1.0 - (season_std / max(career_ppg, 1.0))))
+            upside = max(0.0, min(1.0, (peak_ppg - career_ppg) / max(peak_ppg, 1.0)))
+
+            # Weighted helper for optional metrics.
+            def wavg(col: str) -> float:
+                gc = g[g[col].notna()].copy()
+                if gc.empty:
+                    return 0.0
+                denom = float(gc['games_played'].sum())
+                if denom <= 0:
+                    return 0.0
+                return float((gc[col] * gc['games_played']).sum() / denom)
+
+            avg_weight = wavg('wt')
+            if avg_weight <= 0:
+                avg_weight = wavg('weight')
+            avg_height = wavg('ht')
+            if avg_height <= 0:
+                avg_height = wavg('height')
+            forty = wavg('forty')
+            vertical = wavg('vertical')
+            pass_ypg = wavg('passing_yards_per_game')
+            rush_ypg = wavg('rushing_yards_per_game')
+            rec_ypg = wavg('receiving_yards_per_game')
+            rec_pg = wavg('receptions_per_game')
+            tgt_pg = wavg('targets_per_game')
+            ypt = wavg('yards_per_target_lag1')
+
+            pos_upper = str(position).upper()
+            if pos_upper == 'QB':
+                archetype_signal = min(rush_ypg / 45.0, 1.0)
+                volume_signal = min(pass_ypg / 280.0, 1.0)
+                ideal_weight = 220.0
+                ideal_height = 75.0
+            elif pos_upper == 'RB':
+                archetype_signal = rec_ypg / max(rec_ypg + rush_ypg, 1.0)
+                volume_signal = min((rush_ypg + rec_ypg) / 120.0, 1.0)
+                ideal_weight = 212.0
+                ideal_height = 71.0
+            elif pos_upper == 'TE':
+                archetype_signal = min(max(ypt, rec_ypg / max(rec_pg, 1.0)) / 14.5, 1.0)
+                volume_signal = min(tgt_pg / 7.0, 1.0)
+                ideal_weight = 245.0
+                ideal_height = 77.0
+            else:  # WR + fallback
+                archetype_signal = min(max(ypt, rec_ypg / max(rec_pg, 1.0)) / 17.0, 1.0)
+                volume_signal = min(tgt_pg / 9.0, 1.0)
+                ideal_weight = 205.0
+                ideal_height = 74.0
+
+            weight_fit = max(0.0, 1.0 - abs(avg_weight - ideal_weight) / 28.0) if avg_weight > 0 else 0.0
+            height_fit = max(0.0, 1.0 - abs(avg_height - ideal_height) / 3.5) if avg_height > 0 else 0.0
+            size_signal = 0.0
+            if weight_fit > 0 or height_fit > 0:
+                size_signal = (0.58 * weight_fit) + (0.42 * height_fit)
+                size_signal = max(0.22, min(size_signal, 1.0))
+
+            speed_signal = 0.0
+            if forty > 0:
+                speed_signal = max(speed_signal, max(0.0, min((5.0 - forty) / 0.8, 1.0)))
+            if vertical > 0:
+                speed_signal = max(speed_signal, max(0.0, min(vertical / 42.0, 1.0)))
+
+            profiles.append({
+                'player_display_name': name,
+                'position': str(position).upper(),
+                'games_total': games_total,
+                'seasons': seasons,
+                'career_ppg': career_ppg,
+                'peak_ppg': peak_ppg,
+                'floor_ppg': floor_ppg,
+                'recent_ppg': recent_ppg,
+                'consistency': consistency,
+                'upside': upside,
+                'avg_weight': avg_weight,
+                'avg_height': avg_height,
+                'archetype_signal': max(0.0, min(archetype_signal, 1.0)),
+                'volume_signal': max(0.0, min(volume_signal, 1.0)),
+                'size_signal': max(0.0, min(size_signal, 1.0)),
+                'speed_signal': max(0.0, min(speed_signal, 1.0)),
+            })
+
+        return pd.DataFrame(profiles)
+
+    def _select_diverse_comps(self, candidates: List[Dict[str, Any]], top_k: int = 3) -> List[str]:
+        """
+        Pick high-scoring comps while avoiding near-identical profile duplicates.
+        """
+        if not candidates:
             return []
         
-        # Sort by fantasy PPG (descending) and return top 3
-        nfl_filtered = nfl_filtered.sort_values('fantasy_ppg', ascending=False)
-        comps = nfl_filtered.head(3)['player_display_name'].tolist()
-        
-        return comps
+        pool = sorted(candidates, key=lambda x: x.get('score', 0.0), reverse=True)
+        selected: List[Dict[str, Any]] = []
+
+        while pool and len(selected) < top_k:
+            best_idx = 0
+            best_value = -1.0
+            for i, candidate in enumerate(pool):
+                diversity_penalty = 0.0
+                for chosen in selected:
+                    ppg_gap = abs(self._safe_float(candidate.get('career_ppg')) - self._safe_float(chosen.get('career_ppg')))
+                    peak_gap = abs(self._safe_float(candidate.get('peak_ppg')) - self._safe_float(chosen.get('peak_ppg')))
+                    profile_distance = (ppg_gap / 6.0) + (peak_gap / 8.0)
+                    diversity_penalty += max(0.0, 0.25 - profile_distance * 0.08)
+
+                value = self._safe_float(candidate.get('score')) - diversity_penalty
+                if value > best_value:
+                    best_value = value
+                    best_idx = i
+
+            selected.append(pool.pop(best_idx))
+
+        return [s.get('name', 'Unknown') for s in selected]
     
     def get_top_players_by_class(
         self,
@@ -770,14 +1213,45 @@ class CollegeRankingPipeline:
         if update_comps:
             print("\n📊 Fetching NFL player stats for comparisons...")
             nfl_result = supabase.from_('master_player_stats')\
-                .select('player_display_name, position, fantasy_ppg, games_played')\
-                .eq('season', 2025)\
+                .select('player_display_name, position, season, fantasy_ppg, games_played')\
                 .in_('position', self.skill_positions)\
                 .gte('games_played', 1)\
                 .execute()
             
             if nfl_result.data:
                 nfl_stats_df = pd.DataFrame(nfl_result.data)
+                # Enrich NFL rows with prospect-era size references for size-aware comps.
+                try:
+                    hist = supabase.from_('dynasty_prospects')\
+                        .select('name,height,weight,draft_year')\
+                        .in_('position', self.skill_positions)\
+                        .not_.is_('height', 'null')\
+                        .not_.is_('weight', 'null')\
+                        .execute()
+                    size_map: Dict[str, Tuple[float, float]] = {}
+                    if hist.data:
+                        for row in hist.data:
+                            norm = self._normalize_person_name(row.get('name'))
+                            if not norm:
+                                continue
+                            h = self._safe_float(row.get('height'))
+                            w = self._safe_float(row.get('weight'))
+                            if h <= 0 and w <= 0:
+                                continue
+                            # Prefer latest known measurement if duplicates exist.
+                            size_map[norm] = (h, w)
+
+                    if not nfl_stats_df.empty:
+                        nfl_stats_df['__norm_name'] = nfl_stats_df['player_display_name'].map(self._normalize_person_name)
+                        nfl_stats_df['height'] = nfl_stats_df['__norm_name'].map(
+                            lambda n: size_map.get(n, (0.0, 0.0))[0]
+                        )
+                        nfl_stats_df['weight'] = nfl_stats_df['__norm_name'].map(
+                            lambda n: size_map.get(n, (0.0, 0.0))[1]
+                        )
+                        nfl_stats_df.drop(columns=['__norm_name'], inplace=True)
+                except Exception as e:
+                    print(f"   ⚠ Size enrichment fallback skipped: {str(e)[:100]}")
                 print(f"   Found {len(nfl_stats_df)} NFL players")
         
         # Process each prospect
@@ -906,14 +1380,27 @@ class CollegeRankingPipeline:
             # Find NFL comparisons (try even without stats, use tier-based matching)
             comps = []
             if update_comps and not nfl_stats_df.empty:
+                prospect_profile = {
+                    'overall_grade': row.get('overall_grade'),
+                    'rank': rank,
+                    'height': height,
+                    'weight': weight,
+                    'valuation': valuation,
+                }
                 if stats:
                     # Use stats-based comparison if available
                     comps = self.find_nfl_comparisons(
-                        player_name, position, stats, tier, nfl_stats_df
+                        player_name, position, stats, tier, nfl_stats_df, prospect_profile=prospect_profile
                     )
                 else:
                     # Fallback: find comps based on tier and position only
-                    comps = self.find_tier_based_comps(position, tier, nfl_stats_df)
+                    comps = self.find_tier_based_comps(
+                        position,
+                        tier,
+                        nfl_stats_df,
+                        player_name=player_name,
+                        prospect_profile=prospect_profile,
+                    )
                 
                 if comps:
                     print(f"   ✓ Comps: {', '.join(comps)}")
