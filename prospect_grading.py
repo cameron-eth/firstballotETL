@@ -655,7 +655,7 @@ def calculate_prospect_grade(
     # A #2 pick (Saquon) should grade in the high 80s, not low 80s.
     if year is not None and year < current_year and projected_pick:
         overall = 60.0 + (overall - 60.0) * 1.25
-        overall = min(overall, 96.0)
+        overall = min(overall, 100.0)
 
     # ── Future classes: confidence-based evidence regression ──
     # Instead of a hard ceiling, we use a Bayesian "prove-it" mechanism:

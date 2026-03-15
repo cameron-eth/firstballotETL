@@ -184,7 +184,7 @@ def grade_prospect(prospect: dict) -> dict:
     )
     if int(draft_year) < current_year and has_real_capital:
         overall = 60.0 + (overall - 60.0) * 1.25
-        overall = min(overall, 96.0)
+        overall = min(overall, 100.0)
 
     # ── Future classes: confidence-based evidence regression ──
     # Instead of a hard ceiling, we regress toward a conservative prior based
