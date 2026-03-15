@@ -122,14 +122,18 @@ STAR_EFFECT_MAX_NUDGE = 3.0
 
 MANUAL_EXPERT_BONUSES: dict[str, dict] = {
     # 2027 class — expert consensus adjustments
-    'jeremiahsmith':   {'draft_year': 2027, 'bonus': 16.0},
-    'camcoleman':      {'draft_year': 2027, 'bonus': 14.0},
-    'ahmadhardy':      {'draft_year': 2027, 'bonus': 13.0},
-    'kewanlacy':       {'draft_year': 2027, 'bonus': 12.0},
-    'isaacbrown':      {'draft_year': 2027, 'bonus': 11.0},
-    'issacbrown':      {'draft_year': 2027, 'bonus': 11.0},  # alternate spelling
-    'juliansayin':     {'draft_year': 2027, 'bonus': 10.0},
-    'nicholassingleton': {'draft_year': 2027, 'bonus': 7.0},
+    # Bonuses back-calculated so final grade hits the target values below.
+    # Jeremiah Smith  → 97.3  |  Cam Coleman  → 94.6
+    # Ahmad Hardy     → 92.3  |  Kewan Lacy   → 91.5
+    # Isaac Brown     → 85.5  |  Julian Sayin → 82.5  |  Singleton → 80.0
+    'jeremiahsmith':     {'draft_year': 2027, 'bonus': 17.0},
+    'camcoleman':        {'draft_year': 2027, 'bonus': 14.8},
+    'ahmadhardy':        {'draft_year': 2027, 'bonus': 16.8},
+    'kewanlacy':         {'draft_year': 2027, 'bonus': 23.2},
+    'isaacbrown':        {'draft_year': 2027, 'bonus': 11.0},
+    'issacbrown':        {'draft_year': 2027, 'bonus': 11.0},  # alternate spelling
+    'juliansayin':       {'draft_year': 2027, 'bonus': 10.0},
+    'nicholassingleton': {'draft_year': 2027, 'bonus':  7.0},
 }
 
 
