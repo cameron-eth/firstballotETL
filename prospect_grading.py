@@ -350,6 +350,19 @@ def score_college_production(
 
     g = max(float(games or 0), 1.0)
     score = 50.0
+
+    production_keys_by_position = {
+        'QB': ('pass_yds', 'pass_tds', 'pass_int', 'rush_yds'),
+        'RB': ('rush_yds', 'rush_tds', 'rec_yds', 'rec'),
+        'WR': ('rec_yds', 'rec_tds', 'rec'),
+        'TE': ('rec_yds', 'rec_tds', 'rec'),
+    }
+    production_keys = production_keys_by_position.get(position, ())
+    has_relevant_production = any(_num_or_none(stats, key) is not None for key in production_keys)
+    if not has_relevant_production:
+        # Prevent combine-only blobs (forty, vertical, arm length, etc.)
+        # from being mistaken for actual production input.
+        return 50.0
     
     if position == 'QB':
         pass_yds = _num_or_none(stats, 'pass_yds')

@@ -37,6 +37,7 @@ def import_2026_rankings():
         "tier_numeric": 4,
         "height": "76.00",
         "weight": "200.00",
+        "forty_time": "4.47",
         "class": None,
         "draft_year": None
       },
@@ -55,6 +56,7 @@ def import_2026_rankings():
         "tier_numeric": 3,
         "height": "71.00",
         "weight": "200.00",
+        "forty_time": "4.56",
         "class": None,
         "draft_year": None
       },
@@ -91,6 +93,7 @@ def import_2026_rankings():
         "tier_numeric": 3,
         "height": "70.00",
         "weight": "195.00",
+        "forty_time": "4.37",
         "class": None,
         "draft_year": None
       },
@@ -127,6 +130,7 @@ def import_2026_rankings():
         "tier_numeric": 4,
         "height": "71.00",
         "weight": "209.00",
+        "forty_time": "4.49",
         "class": None,
         "draft_year": None
       },
@@ -217,6 +221,7 @@ def import_2026_rankings():
         "tier_numeric": 5,
         "height": "76.00",
         "weight": "223.00",
+        "forty_time": "4.61",
         "class": None,
         "draft_year": None
       },
@@ -271,25 +276,39 @@ def import_2026_rankings():
         "tier_numeric": 2,
         "height": "77.00",
         "weight": "200.00",
+        "forty_time": "4.37",
         "class": None,
         "draft_year": None
       },
       {
-        "rank": 10,
+        "rank": 2,
         "name": "Eli Stowers",
-        "position": "QB",
-        "school": "TBD",
+        "position": "TE",
+        "school": "Vanderbilt",
         "espn_id": 4431574,
         "id": 30,
-        "tier": "Tier 2",
-        "nfl_comparisons": "Jalen Hurts, Matthew Stafford, Dak Prescott",
-        "display_tier": "Second Round",
+        "tier": "Tier 3",
+        "nfl_comparisons": "Trey McBride, Mark Andrews, Jonnu Smith",
+        "display_tier": "Starter",
         "valuation": "54.65",
-        "position_multiplier": "1.40",
-        "tier_numeric": 2,
-        "height": None,
-        "weight": None,
-        "class": None,
+        "position_multiplier": "1.20",
+        "tier_numeric": 3,
+        "height": "76.00",
+        "weight": "239.00",
+        "forty_time": "4.51",
+        "vertical": "45.5",
+        "broad_jump": "135.0",
+        "college_games": 45,
+        "college_stats": {
+          "rec": 146,
+          "rec_yds": 1773,
+          "rec_tds": 11,
+          "rush_att": 37,
+          "rush_yds": 134,
+          "rush_tds": 2
+        },
+        "hometown": "Denton, TX",
+        "class": "Senior",
         "draft_year": None
       },
       {
@@ -397,6 +416,7 @@ def import_2026_rankings():
         "tier_numeric": 5,
         "height": "71.00",
         "weight": "185.00",
+        "forty_time": "4.41",
         "class": "2",
         "draft_year": None
       },
@@ -433,6 +453,7 @@ def import_2026_rankings():
         "tier_numeric": 5,
         "height": "72.00",
         "weight": "190.00",
+        "forty_time": "4.40",
         "class": "4",
         "draft_year": None
       },
@@ -451,6 +472,7 @@ def import_2026_rankings():
         "tier_numeric": 5,
         "height": "73.00",
         "weight": "215.00",
+        "forty_time": "4.35",
         "class": "4",
         "draft_year": None
       },
@@ -602,8 +624,8 @@ def import_2026_rankings():
         "rank": 14,
         "name": "Chris Bell",
         "position": "WR",
-        "school": "Kansas",
-        "espn_id": 4869961,
+        "school": "Louisville",
+        "espn_id": None,
         "id": 33,
         "tier": "Tier 3",
         "nfl_comparisons": "CeeDee Lamb, Davante Adams, Chris Olave",
@@ -611,8 +633,15 @@ def import_2026_rankings():
         "valuation": "63.48",
         "position_multiplier": "1.00",
         "tier_numeric": 3,
-        "height": "70.00",
-        "weight": "176.00",
+        "height": "74.00",
+        "weight": "222.00",
+        "forty_time": "4.40",
+        "college_games": 47,
+        "college_stats": {
+          "rec": 151,
+          "rec_yds": 2166,
+          "rec_tds": 12
+        },
         "class": None,
         "draft_year": None
       },
@@ -665,8 +694,9 @@ def import_2026_rankings():
         "valuation": "76.80",
         "position_multiplier": "0.80",
         "tier_numeric": 1,
-        "height": "70.00",
-        "weight": "205.00",
+        "height": "72.00",
+        "weight": "214.00",
+        "forty_time": "4.36",
         "class": "3",
         "draft_year": None
       },
@@ -685,6 +715,7 @@ def import_2026_rankings():
         "tier_numeric": 1,
         "height": "72.00",
         "weight": "199.00",
+        "forty_time": "4.53",
         "class": "3",
         "draft_year": None
       },
@@ -743,21 +774,34 @@ def import_2026_rankings():
         "draft_year": None
       },
       {
-        "rank": 12,
+        "rank": 8,
         "name": "Kenyon Sadiq",
         "position": "TE",
         "school": "Oregon",
         "espn_id": 5083315,
         "id": 31,
-        "tier": "Tier 2",
+        "tier": "Tier 4",
         "nfl_comparisons": "Trey McBride",
-        "display_tier": "Elite Prospect",
+        "display_tier": "Rotational",
         "valuation": "59.16",
         "position_multiplier": "1.20",
-        "tier_numeric": 2,
+        "tier_numeric": 4,
         "height": "75.00",
-        "weight": "245.00",
-        "class": None,
+        "weight": "241.00",
+        "forty_time": "4.39",
+        "vertical": "43.5",
+        "broad_jump": "133.0",
+        "college_games": 39,
+        "college_stats": {
+          "rec": 80,
+          "rec_yds": 892,
+          "rec_tds": 11,
+          "rush_att": 9,
+          "rush_yds": 42,
+          "rush_tds": 0
+        },
+        "hometown": "Idaho Falls, ID",
+        "class": "Junior",
         "draft_year": None
       }
     ]
@@ -769,6 +813,27 @@ def import_2026_rankings():
     # Transform data to match dynasty_prospects schema
     prospects = []
     for item in raw_data:
+        college_stats = {}
+        raw_college_stats = item.get('college_stats')
+        if isinstance(raw_college_stats, dict):
+            college_stats.update(raw_college_stats)
+
+        for source_key, target_key in (
+            ('forty_time', 'forty_time'),
+            ('forty', 'forty'),
+            ('40yd', '40yd'),
+            ('vertical', 'vertical'),
+            ('broad_jump', 'broad_jump'),
+            ('broad', 'broad'),
+            ('bench', 'bench'),
+            ('three_cone', 'three_cone'),
+            ('3cone', '3cone'),
+            ('shuttle', 'shuttle'),
+        ):
+            value = item.get(source_key)
+            if value is not None:
+                college_stats[target_key] = float(value)
+
         prospect = {
             'name': item['name'],
             'position': item['position'],
@@ -784,6 +849,9 @@ def import_2026_rankings():
             'nfl_comparisons': item['nfl_comparisons'],
             'height': float(item['height']) if item['height'] else None,
             'weight': float(item['weight']) if item['weight'] else None,
+            'college_stats': college_stats or None,
+            'college_games': int(item['college_games']) if item.get('college_games') else None,
+            'hometown': item.get('hometown'),
             'class': item['class']
         }
         prospects.append(prospect)
