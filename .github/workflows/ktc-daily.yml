@@ -1,0 +1,30 @@
+name: KTC Daily Scrape
+
+on:
+  schedule:
+    # 6:00 AM EST every day (11:00 UTC)
+    - cron: '0 11 * * *'
+  workflow_dispatch: # allow manual trigger from GitHub UI
+
+jobs:
+  scrape-ktc:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: requirements-ktc.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-ktc.txt
+
+      - name: Run KTC scraper
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: python fetch_ktc_values.py
