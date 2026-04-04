@@ -16,12 +16,21 @@ import re
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 import pandas as pd
 import numpy as np
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
+
+# Import outcome range helper (lazy import to avoid circular deps at module level)
+def _get_outcome_range(position: str, grade: Optional[float]) -> Tuple[str, str]:
+    """Thin wrapper so prospect_grading stays self-contained at import time."""
+    try:
+        from tiers.definitions import get_prospect_outcome_range
+        return get_prospect_outcome_range(position, grade)
+    except Exception:
+        return ('Unknown', 'Unknown')
 
 
 # ==============================================================================
@@ -189,6 +198,44 @@ def normalize_player_name(name: Optional[str]) -> str:
     return re.sub(r'[^a-z0-9]+', '', s)
 
 
+def _coerce_float(value: Optional[object]) -> Optional[float]:
+    try:
+        if value is None or value == '':
+            return None
+        return float(value)
+    except Exception:
+        return None
+
+
+def _coerce_int(value: Optional[object]) -> Optional[int]:
+    numeric = _coerce_float(value)
+    if numeric is None:
+        return None
+    return int(round(numeric))
+
+
+def get_external_consensus_context(prospect: Dict) -> Dict[str, Optional[float]]:
+    """
+    Return the external consensus inputs for a prospect.
+
+    Falls back to legacy `rank` only when the newer explicit consensus fields
+    are absent so old data can still be graded.
+    """
+    consensus_rank = _coerce_int(prospect.get('consensus_rank'))
+    avg_rank = _coerce_float(prospect.get('consensus_avg_rank'))
+    rank_stddev = _coerce_float(prospect.get('consensus_rank_stddev'))
+    fallback_rank = _coerce_int(prospect.get('rank'))
+
+    seed_rank = consensus_rank or (_coerce_int(avg_rank) if avg_rank is not None else None) or fallback_rank
+
+    return {
+        'consensus_rank': consensus_rank,
+        'consensus_avg_rank': avg_rank,
+        'consensus_rank_stddev': rank_stddev,
+        'seed_rank': seed_rank,
+    }
+
+
 def apply_star_effect(
     name: Optional[str],
     overall_grade: float,
@@ -228,22 +275,24 @@ def apply_star_effect(
 
 IDEAL_MEASURABLES = {
     'QB': {
-        'height': (74, 78),    # 6'2" - 6'6" ideal
+        'height': (74, 79),    # 6'2" - 6'7" ideal (taller QBs not penalized)
         'weight': (215, 240),
         'height_weight': 0.6,  # Height more important for QB
     },
     'RB': {
-        'height': (69, 73),    # 5'9" - 6'1" ideal
+        'height': (68, 72),    # 5'8" - 6'0" ideal
         'weight': (205, 230),
         'height_weight': 0.4,  # Weight more important for RB
     },
     'WR': {
-        'height': (71, 76),    # 5'11" - 6'4" ideal
-        'weight': (185, 220),
+        'height': (71, 79),    # 5'11" - 6'7" ideal — expanded upper bound so
+                                # elite-size receivers (6'4"+) aren't penalized.
+                                # Being tall for WR is a positive, not negative.
+        'weight': (185, 225),
         'height_weight': 0.5,  # Balanced
     },
     'TE': {
-        'height': (75, 79),    # 6'3" - 6'7" ideal
+        'height': (75, 80),    # 6'3" - 6'8" ideal
         'weight': (240, 270),
         'height_weight': 0.5,  # Balanced
     },
@@ -500,12 +549,31 @@ def score_physical_measurables(
     h_half = max((h_max - h_min) / 2.0, 1.0)
     w_half = max((w_max - w_min) / 2.0, 1.0)
 
+    pos = position.upper()
+
     height_score = 52.0
     if height:
-        h_dist = abs(float(height) - h_mid) / h_half
-        # Midpoint can peak in the mid/high 80s, then decays non-linearly.
-        height_score = 87.0 - (h_dist * 14.0) - ((h_dist**2) * 7.0)
-        height_score = max(30.0, min(90.0, height_score))
+        h_val = float(height)
+        # Asymmetric height scoring:
+        # Being ABOVE the ideal range is treated more leniently than being below.
+        # For WR/TE/QB: extra height is generally a positive (catch radius, contested
+        # catches, passing windows). For RB: extra height is slightly negative.
+        # Penalty below ideal: steep (14 pts/half-width + quadratic 7).
+        # Penalty above ideal: shallow (6 pts/half-width + quadratic 3).
+        if h_val <= h_mid:
+            # Below midpoint — symmetric penalty
+            h_dist = (h_mid - h_val) / h_half
+            height_score = 87.0 - (h_dist * 14.0) - ((h_dist**2) * 7.0)
+        else:
+            # Above midpoint — gentler penalty (taller is usually fine for skill positions)
+            h_dist = (h_val - h_mid) / h_half
+            if pos == 'RB':
+                # RBs: extra height hurts leverage/contact balance
+                height_score = 87.0 - (h_dist * 10.0) - ((h_dist**2) * 5.0)
+            else:
+                # WR/QB/TE: extra height is a positive, minimal penalty
+                height_score = 87.0 - (h_dist * 4.0) - ((h_dist**2) * 2.0)
+        height_score = max(30.0, min(92.0, height_score))
 
     weight_score = 52.0
     if weight:
@@ -518,18 +586,24 @@ def score_physical_measurables(
     score = (height_score * h_weight) + (weight_score * (1 - h_weight))
     
     combine_parts = []
-    pos = position.upper()
 
     # 40-yard (lower is better)
+    # np.interp clamps at endpoints, so times faster than the lower bound still score max.
     if forty_time:
+        ft = float(forty_time)
         if pos == 'QB':
-            combine_parts.append(np.interp(float(forty_time), [5.15, 4.45], [35, 97]))
+            combine_parts.append(float(np.interp(ft, [5.15, 4.45], [35, 97])))
         elif pos == 'RB':
-            combine_parts.append(np.interp(float(forty_time), [4.85, 4.30], [30, 99]))
+            # Sub-4.30 is Tyreek-at-RB territory → cap at 99
+            combine_parts.append(float(np.interp(ft, [4.85, 4.28], [30, 99])))
         elif pos == 'WR':
-            combine_parts.append(np.interp(float(forty_time), [4.78, 4.28], [30, 99]))
+            # 4.28 is near the all-time record; sub-4.35 is elite.
+            # Extended upper range so a 4.30 WR scores ~96+ not artificially floored.
+            combine_parts.append(float(np.interp(ft, [4.78, 4.25], [30, 99])))
         elif pos == 'TE':
-            combine_parts.append(np.interp(float(forty_time), [5.00, 4.45], [30, 98]))
+            # A TE running 4.30 is historically exceptional (Kelce runs ~4.61).
+            # Extended fast end to reward jumbo-speed TEs.
+            combine_parts.append(float(np.interp(ft, [5.00, 4.38], [30, 99])))
 
     # Explosiveness
     if vertical:
@@ -550,12 +624,19 @@ def score_physical_measurables(
     has_combine = len(combine_parts) > 0
     combine_score = float(np.mean(combine_parts)) if has_combine else 50.0
 
-    # Penalize sparse combine profiles so one good metric doesn't flatten everyone near 90.
+    # Penalize sparse combine profiles so one average metric doesn't inflate the score.
+    # However, a single ELITE metric (40-time, vertical) is genuine signal and shouldn't
+    # be capped aggressively — the cap only prevents mediocre single metrics from hitting 90+.
     if has_combine:
         if len(combine_parts) == 1:
-            combine_score = min(combine_score, 86.0)
+            # Allow elite single metrics (score >= 92) through at 91; cap average ones at 85.
+            single = combine_score
+            if single >= 92.0:
+                combine_score = min(single, 94.0)   # Elite verified metric — trust it
+            else:
+                combine_score = min(single, 85.0)   # Average single metric — cap
         elif len(combine_parts) == 2:
-            combine_score = min(combine_score, 90.0)
+            combine_score = min(combine_score, 92.0)
 
     # Weight size/profile + combine blend.
     # RBs should lean more on verified speed than other positions.
@@ -566,6 +647,14 @@ def score_physical_measurables(
         size_w = 0.66
         combine_w = 0.34
     final = (score * size_w) + (combine_score * combine_w if has_combine else 50.0 * combine_w)
+
+    # Jumbo WR speed bonus: a tall WR (6'4"+, i.e. ≥76 inches) who also runs elite
+    # is an exceptionally rare and valuable prospect profile. Add an additive bonus
+    # so the overall physical score properly reflects that combination.
+    if pos == 'WR' and forty_time and height and float(height) >= 76.0:
+        # Scale: 4.25 or faster → +8, 4.35 → +5, 4.45 → +2, 4.55+ → 0
+        wr_jumbo_bonus = float(np.interp(float(forty_time), [4.55, 4.25], [0.0, 8.0]))
+        final += wr_jumbo_bonus
 
     # Tight-end speed matters more for fantasy upside: reward verified TE burst.
     if pos == 'TE' and forty_time:
@@ -593,18 +682,35 @@ def score_physical_measurables(
 # EXPERT CONSENSUS SCORING
 # ==============================================================================
 
-def score_expert_consensus(rank: int, total_prospects: int = 50) -> float:
+def score_expert_consensus(
+    rank: Optional[int] = None,
+    total_prospects: int = 50,
+    avg_rank: Optional[float] = None,
+    rank_stddev: Optional[float] = None,
+) -> float:
     """
     Score expert consensus ranking (0-100).
     
     Gold standard: Top 5 dynasty prospect ranking
     """
-    if not rank or rank <= 0:
+    rank_value = _coerce_float(avg_rank)
+    if rank_value is None:
+        rank_value = float(rank) if rank and rank > 0 else None
+
+    if rank_value is None or rank_value <= 0:
         return 50.0
     
     # Continuous decay reduces giant score clusters from bucket thresholds.
-    r = float(max(rank, 1))
-    return round(max(20.0, min(100.0, 104.0 - (12.5 * np.log10(r + 1.0) * 2.0))), 1)
+    r = float(max(rank_value, 1.0))
+    base_score = 104.0 - (12.5 * np.log10(r + 1.0) * 2.0)
+
+    # Lower stddev means stronger market agreement and slightly more confidence.
+    if rank_stddev is not None:
+        std = max(float(rank_stddev), 0.0)
+        stability_bonus = float(np.interp(std, [0.0, 2.0, 5.0, 10.0, 20.0], [4.0, 3.0, 0.5, -3.0, -6.0]))
+        base_score += stability_bonus
+
+    return round(max(20.0, min(100.0, base_score)), 1)
 
 
 # ==============================================================================
@@ -674,6 +780,8 @@ def calculate_prospect_grade(
     draft_year: Optional[int] = None,
     class_year: Optional[str] = None,
     age_at_draft: Optional[float] = None,
+    consensus_avg_rank: Optional[float] = None,
+    consensus_rank_stddev: Optional[float] = None,
 ) -> Dict:
     """
     Calculate overall prospect grade (0-100) with component breakdown.
@@ -697,7 +805,11 @@ def calculate_prospect_grade(
         shuttle=shuttle,
         draft_year=draft_year,
     )
-    consensus_score = score_expert_consensus(rank)
+    consensus_score = score_expert_consensus(
+        rank,
+        avg_rank=consensus_avg_rank,
+        rank_stddev=consensus_rank_stddev,
+    )
     age_score = score_age_factor(class_year, age_at_draft)
     weights = get_grade_weights(draft_year, projected_round, projected_pick)
     
@@ -753,6 +865,8 @@ def calculate_prospect_grade(
     overall, _ = apply_star_effect(name, overall, draft_year, rank)
     overall, _ = apply_expert_bonus(name, overall, draft_year)
 
+    outcome_ceiling, outcome_floor = _get_outcome_range(position, round(overall, 1))
+
     return {
         'overall_grade': round(overall, 1),
         'hs_recruiting_score': hs_score,
@@ -761,6 +875,8 @@ def calculate_prospect_grade(
         'physical_measurables_score': physical_score,
         'expert_consensus_score': consensus_score,
         'grade_tier': get_grade_tier(overall),
+        'outcome_ceiling': outcome_ceiling,
+        'outcome_floor': outcome_floor,
     }
 
 

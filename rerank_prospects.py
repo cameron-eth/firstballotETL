@@ -39,6 +39,8 @@ from prospect_grading import (
     apply_expert_bonus,
     STAR_EFFECT_PROSPECTS,
     normalize_player_name,
+    get_external_consensus_context,
+    _get_outcome_range,
 )
 
 
@@ -91,6 +93,8 @@ def recalculate_grade(prospect: dict) -> dict:
     position = prospect.get('position', 'TE')
     current_rank = prospect.get('rank') or 50
     draft_year = prospect.get('draft_year') or 2026
+    consensus = get_external_consensus_context(prospect)
+    consensus_seed_rank = int(consensus['seed_rank'] or current_rank or 50)
     
     # HS recruiting data
     hs_stars = prospect.get('hs_stars')
@@ -137,16 +141,16 @@ def recalculate_grade(prospect: dict) -> dict:
         if int(draft_year) < current_year:
             # Already-drafted class with missing capital:
             # estimate from rank, but apply a conservative haircut.
-            er, ep = estimate_draft_round_from_rank(current_rank, draft_year)
+            er, ep = estimate_draft_round_from_rank(consensus_seed_rank, draft_year)
             draft_score = max(35.0, score_draft_projection(er, ep) - 8.0)
             draft_round, draft_pick = er, ep
         elif int(draft_year) == current_year:
             # Current draft class: use full rank-estimated capital, no compression.
-            draft_round, draft_pick = estimate_draft_round_from_rank(current_rank, draft_year)
+            draft_round, draft_pick = estimate_draft_round_from_rank(consensus_seed_rank, draft_year)
             draft_score = score_draft_projection(draft_round, draft_pick)
         else:
             # Future classes: estimate from rank, but apply uncertainty discount.
-            draft_round, draft_pick = estimate_draft_round_from_rank(current_rank, draft_year)
+            draft_round, draft_pick = estimate_draft_round_from_rank(consensus_seed_rank, draft_year)
             raw_draft_score = score_draft_projection(draft_round, draft_pick)
             # Compress toward neutral (60) — top picks still score well, but not 95.
             draft_score = 60.0 + (raw_draft_score - 60.0) * 0.55
@@ -168,7 +172,11 @@ def recalculate_grade(prospect: dict) -> dict:
         shuttle=shuttle,
         draft_year=draft_year,
     )
-    consensus_score = score_expert_consensus(current_rank)
+    consensus_score = score_expert_consensus(
+        consensus_seed_rank,
+        avg_rank=consensus['consensus_avg_rank'],
+        rank_stddev=consensus['consensus_rank_stddev'],
+    )
     age_score = score_age_factor(class_year, age_at_draft)
     weights = get_grade_weights(draft_year, draft_round, draft_pick)
     
@@ -205,20 +213,23 @@ def recalculate_grade(prospect: dict) -> dict:
         blend = 0.60 + 0.40 * confidence
         overall = prior + (overall - prior) * blend
 
-    overall, _ = apply_star_effect(prospect.get('name'), overall, draft_year, rank=current_rank)
+    overall, _ = apply_star_effect(prospect.get('name'), overall, draft_year, rank=consensus_seed_rank)
     overall, _ = apply_expert_bonus(prospect.get('name'), overall, draft_year)
 
     overall = round(overall, 2)
-    
+
     # Determine tier
     tier, tier_numeric = get_tier_from_grade(overall)
     grade_tier = get_grade_tier(overall)
-    
+    outcome_ceiling, outcome_floor = _get_outcome_range(position, overall)
+
     return {
         'overall_grade': overall,
         'tier': tier,
         'tier_numeric': tier_numeric,
         'grade_tier': grade_tier,
+        'outcome_ceiling': outcome_ceiling,
+        'outcome_floor': outcome_floor,
         'hs_recruiting_score': round(hs_score, 2),
         'college_production_score': round(production_score, 2),
         'draft_projection_score': round(draft_score, 2),

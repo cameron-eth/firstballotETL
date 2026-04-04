@@ -63,6 +63,14 @@ CREATE TABLE dynasty_prospects (
     hs_rating DECIMAL(6,4),
     hs_school VARCHAR(255),
     hs_state VARCHAR(10),
+    consensus_rank INTEGER,
+    consensus_position_rank INTEGER,
+    consensus_avg_rank DECIMAL(6,2),
+    consensus_rank_stddev DECIMAL(6,2),
+    consensus_best_rank INTEGER,
+    consensus_worst_rank INTEGER,
+    consensus_source VARCHAR(100),
+    consensus_updated_at TIMESTAMP,
     rank INTEGER,
     tier VARCHAR(20),
     tier_numeric INTEGER,
@@ -85,6 +93,7 @@ CREATE TABLE dynasty_prospects (
 );
 
 CREATE INDEX idx_prospects_rank ON dynasty_prospects(rank);
+CREATE INDEX idx_prospects_consensus_rank ON dynasty_prospects(consensus_rank);
 CREATE INDEX idx_prospects_position ON dynasty_prospects(position);
 CREATE INDEX idx_prospects_draft_year ON dynasty_prospects(draft_year);
 CREATE INDEX idx_prospects_tier ON dynasty_prospects(tier_numeric);

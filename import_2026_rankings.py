@@ -12,6 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from config import config
+from fantasypros_2026_consensus import build_consensus_lookup, normalize_consensus_name
 
 def import_2026_rankings():
     """Import the provided 2026 rankings into dynasty_prospects."""
@@ -19,6 +20,7 @@ def import_2026_rankings():
     if not supabase:
         print("❌ Failed to get Supabase client")
         return False
+    consensus_lookup = build_consensus_lookup()
 
     # The data provided by the user
     raw_data = [
@@ -62,9 +64,9 @@ def import_2026_rankings():
       },
       {
         "rank": 7,
-        "name": "KC Concepcion",
+        "name": "K.C. Concepcion",
         "position": "WR",
-        "school": "TBD",
+        "school": "Texas A&M",
         "espn_id": 4870653,
         "id": 27,
         "tier": "Tier 2",
@@ -73,9 +75,12 @@ def import_2026_rankings():
         "valuation": "64.42",
         "position_multiplier": "1.00",
         "tier_numeric": 2,
-        "height": None,
-        "weight": None,
-        "class": None,
+        "height": "72.00",
+        "weight": "196.00",
+        "forty_time": "4.48",
+        "hometown": "Charlotte, NC",
+        "class": "Junior",
+        "headshot_url": "https://a.espncdn.com/i/headshots/college-football/players/full/4870653.png",
         "draft_year": None
       },
       {
@@ -660,6 +665,7 @@ def import_2026_rankings():
         "tier_numeric": 1,
         "height": "71.00",
         "weight": "200.00",
+        "forty_time": "4.55",
         "class": "4",
         "draft_year": None
       },
@@ -713,7 +719,7 @@ def import_2026_rankings():
         "valuation": "83.31",
         "position_multiplier": "1.00",
         "tier_numeric": 1,
-        "height": "72.00",
+        "height": "75.00",
         "weight": "199.00",
         "forty_time": "4.53",
         "class": "3",
@@ -770,6 +776,7 @@ def import_2026_rankings():
         "tier_numeric": 2,
         "height": "69.00",
         "weight": "228.00",
+        "forty_time": "4.52",
         "class": "4",
         "draft_year": None
       },
@@ -834,11 +841,14 @@ def import_2026_rankings():
             if value is not None:
                 college_stats[target_key] = float(value)
 
+        consensus = consensus_lookup.get((normalize_consensus_name(item['name']), item['position']))
+
         prospect = {
             'name': item['name'],
             'position': item['position'],
             'school': item['school'],
             'espn_id': item['espn_id'],
+            'headshot_url': item.get('headshot_url'),
             'draft_year': 2026,  # Force 2026
             'rank': item['rank'],
             'tier': item['tier'],
@@ -852,7 +862,14 @@ def import_2026_rankings():
             'college_stats': college_stats or None,
             'college_games': int(item['college_games']) if item.get('college_games') else None,
             'hometown': item.get('hometown'),
-            'class': item['class']
+            'class': item['class'],
+            'consensus_rank': consensus.get('consensus_rank') if consensus else None,
+            'consensus_position_rank': consensus.get('consensus_position_rank') if consensus else None,
+            'consensus_avg_rank': consensus.get('consensus_avg_rank') if consensus else None,
+            'consensus_rank_stddev': consensus.get('consensus_rank_stddev') if consensus else None,
+            'consensus_best_rank': consensus.get('consensus_best_rank') if consensus else None,
+            'consensus_worst_rank': consensus.get('consensus_worst_rank') if consensus else None,
+            'consensus_source': consensus.get('consensus_source') if consensus else None,
         }
         prospects.append(prospect)
 
